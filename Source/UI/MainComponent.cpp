@@ -672,7 +672,7 @@ void MainComponent::menuItem (int menu, int item)
         if (item == 4 && updater != nullptr) updater->setAutoCheck (! updater->autoCheckEnabled());
         if (item == 2)
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon, "Ja Mixei " + juce::JUCEApplication::getInstance()->getApplicationVersion(),
-                (TR ("Criado por Ranariel.\n\nSampler / remixador estilo MPC.\n\nMotor de áudio em C++ (JUCE), time-stretch Rubber Band de alta qualidade, ") + TR ("detecção de BPM e transientes, 64 pads em 4 bancos, sequenciador de passos, arranjo com crossfades, automação, ") + TR ("mixer com EQ/filtro DJ/reverb/delay, gravação de áudio e exportação MP3/WAV/FLAC/OGG.\n\n© 2026 Ranariel. Todos os direitos reservados.")));
+                (TR ("Criado por Ranariel.\n\nSampler / remixador estilo MPC.\n\nMotor de áudio em C++ (JUCE), time-stretch Rubber Band de alta qualidade, ") + TR ("detecção de BPM e transientes, 64 pads em 4 bancos, sequenciador de passos, arranjo com crossfades, automação, ") + TR ("mixer com EQ/filtro DJ/reverb/delay, gravação de áudio e exportação MP3/WAV/FLAC/OGG.\n\n© 2026 Ranariel. Software livre (licença GPL v3).")));
     }
 }
 

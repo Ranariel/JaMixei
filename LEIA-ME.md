@@ -142,7 +142,7 @@ A pasta `codigo-fonte` tem o projeto completo (C++17, CMake):
 Para recompilar no Windows, instale o Visual Studio 2022 (com C++), o CMake e o Git e rode `compilar-windows.bat`.
 O script baixa o JUCE 7.0.12, o Rubber Band e o LAME e gera o .exe.
 
-Licenças: JUCE (GPLv3/comercial), Rubber Band Library (GPL), LAME (LGPL), fontes Inter, JetBrains Mono e Noto Sans SC (SIL Open Font License). Uso pessoal sem restrições.
+Licenças: JUCE (GPLv3/comercial), Rubber Band Library (GPL), LAME (LGPL), fontes Inter, JetBrains Mono e Noto Sans SC (SIL Open Font License). O Ja Mixei é software livre sob a licença GPL v3 (arquivo LICENSE). Código-fonte: https://github.com/Ranariel/JaMixei
 
 ---
 Ja Mixei © 2026 Ranariel.

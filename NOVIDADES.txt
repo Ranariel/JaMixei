@@ -1,3 +1,2 @@
-- O Ja Mixei agora se atualiza sozinho: ao abrir, ele procura versões novas (Ajuda > Procurar atualizações)
-- Atualização com um clique: baixa, confere e instala, e o programa abre de novo já atualizado
-- Idiomas: Português (Brasil), English, Español e 中文
+- O código do Ja Mixei agora é aberto (software livre, licença GPL v3): github.com/Ranariel/JaMixei
+- Atualização automática: ao abrir, o programa procura versões novas (Ajuda > Procurar atualizações)

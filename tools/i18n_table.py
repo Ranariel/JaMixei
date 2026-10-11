@@ -32,7 +32,7 @@ T = [
 (r"Edições, montagens e remixes das suas músicas", r"Edits, mashups and remixes of your music", r"Ediciones, montajes y remixes de tu música", r"剪辑、拼接和混音你的音乐"),
 (r"Versão ", r"Version ", r"Versión ", r"版本 "),
 (r"Criado por ", r"Created by ", r"Creado por ", r"作者 "),
-(r"© 2026 Ranariel. Todos os direitos reservados.", r"© 2026 Ranariel. All rights reserved.", r"© 2026 Ranariel. Todos los derechos reservados.", r"© 2026 Ranariel。保留所有权利。"),
+(r"© 2026 Ranariel. Software livre (licença GPL v3).", r"© 2026 Ranariel. Free software (GPL v3 license).", r"© 2026 Ranariel. Software libre (licencia GPL v3).", r"© 2026 Ranariel。自由软件（GPL v3 许可证）。"),
 (r"por Ranariel", r"by Ranariel", r"por Ranariel", r"作者 Ranariel"),
 # ---- projeto / sessao
 (r"Pads / Batida", r"Pads / Beat", r"Pads / Ritmo", r"打击垫 / 节拍"),
@@ -294,7 +294,7 @@ T = [
 (r"GPU desligada: a tela é desenhada pelo processador", r"GPU off: the screen is drawn by the processor", r"GPU desactivada: la pantalla la dibuja el procesador", r"GPU 已关闭：界面由处理器绘制"),
 (r"Criado por Ranariel.\n\nSampler / remixador estilo MPC.\n\nMotor de áudio em C++ (JUCE), time-stretch Rubber Band de alta qualidade, ", r"Created by Ranariel.\n\nMPC-style sampler / remixer.\n\nC++ audio engine (JUCE), high-quality Rubber Band time-stretch, ", r"Creado por Ranariel.\n\nSampler / remezclador estilo MPC.\n\nMotor de audio en C++ (JUCE), time-stretch Rubber Band de alta calidad, ", r"作者 Ranariel。\n\nMPC 风格的采样器 / 混音器。\n\nC++ 音频引擎 (JUCE)，高质量 Rubber Band 变速，"),
 (r"detecção de BPM e transientes, 64 pads em 4 bancos, sequenciador de passos, arranjo com crossfades, automação, ", r"BPM and transient detection, 64 pads in 4 banks, step sequencer, arrangement with crossfades, automation, ", r"detección de BPM y transitorios, 64 pads en 4 bancos, secuenciador por pasos, arreglo con fundidos cruzados, automatización, ", r"BPM 与瞬态检测，4 组共 64 个打击垫，步进音序器，带交叉淡化的编排，自动化，"),
-(r"mixer com EQ/filtro DJ/reverb/delay, gravação de áudio e exportação MP3/WAV/FLAC/OGG.\n\n© 2026 Ranariel. Todos os direitos reservados.", r"mixer with EQ/DJ filter/reverb/delay, audio recording and MP3/WAV/FLAC/OGG export.\n\n© 2026 Ranariel. All rights reserved.", r"mezclador con EQ/filtro DJ/reverb/delay, grabación de audio y exportación MP3/WAV/FLAC/OGG.\n\n© 2026 Ranariel. Todos los derechos reservados.", r"带均衡/DJ 滤波/混响/延迟的调音台，音频录制及 MP3/WAV/FLAC/OGG 导出。\n\n© 2026 Ranariel。保留所有权利。"),
+(r"mixer com EQ/filtro DJ/reverb/delay, gravação de áudio e exportação MP3/WAV/FLAC/OGG.\n\n© 2026 Ranariel. Software livre (licença GPL v3).", r"mixer with EQ/DJ filter/reverb/delay, audio recording and MP3/WAV/FLAC/OGG export.\n\n© 2026 Ranariel. Free software (GPL v3 license).", r"mezclador con EQ/filtro DJ/reverb/delay, grabación de audio y exportación MP3/WAV/FLAC/OGG.\n\n© 2026 Ranariel. Software libre (licencia GPL v3).", r"带均衡/DJ 滤波/混响/延迟的调音台，音频录制及 MP3/WAV/FLAC/OGG 导出。\n\n© 2026 Ranariel。自由软件（GPL v3 许可证）。"),
 (r"Projeto não salvo", r"Unsaved project", r"Proyecto sin guardar", r"项目未保存"),
 (r"Deseja salvar as alterações antes de continuar?", r"Do you want to save your changes before continuing?", r"¿Deseas guardar los cambios antes de continuar?", r"继续之前要保存更改吗？"),
 (r"Salvar", r"Save", r"Guardar", r"保存"),

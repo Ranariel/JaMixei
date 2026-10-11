@@ -211,7 +211,7 @@ void SplashScreen::paint (juce::Graphics& g)
     g.drawText ("Ranariel", credits.withTrimmedLeft (byW), juce::Justification::centredLeft);
     g.setColour (Theme::textFaint);
     g.setFont (splashFont (13.0f, false));
-    g.drawText (TR ("© 2026 Ranariel. Todos os direitos reservados."), credits, juce::Justification::centredRight);
+    g.drawText (TR ("© 2026 Ranariel. Software livre (licença GPL v3)."), credits, juce::Justification::centredRight);
 
     // borda
     g.setColour (juce::Colour (0xff2f3540));
