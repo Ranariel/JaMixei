@@ -91,7 +91,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=${{ steps.ver.outputs.version }}
-          git log -1 --pretty=%B > notes.txt
+          # notas da versao: NOVIDADES.txt (texto que aparece no aviso de atualizacao)
+          if [ -s NOVIDADES.txt ]; then cp NOVIDADES.txt notes.txt; else git log -1 --pretty=%s > notes.txt; fi
           gh release create "v$v" \
             "installer/Ja-Mixei-Instalador-$v.exe" \
             "installer/Ja-Mixei-Instalador-$v.exe.sha256" \
