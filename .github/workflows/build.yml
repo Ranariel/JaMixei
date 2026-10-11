@@ -1,0 +1,112 @@
+# Ja Mixei - build automatico + release + aviso para a VPS (igual ao Ja Telei)
+# A cada push na main: compila o .exe do Windows (MinGW, no Linux), gera o instalador (NSIS),
+# publica o Release "v1.4.N" com o .exe e o .sha256 e avisa a VPS, que atualiza
+# https://jaclipei.com/jamixei/latest.json -> o programa instalado oferece a atualizacao.
+name: Build e Release
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore: [ '**.md', 'tools/**' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION_BASE: "1.4"
+  JUCE_SHA: 4f43011b96eb0636104cb3e433894cda98243626        # JUCE 7.0.12
+  RUBBERBAND_SHA: e4296ac80b1170018a110bc326fd0d45a0eb27d6  # Rubber Band 4.0.0
+  LAME_SHA: 1f5cc9487284d5950343aa5d4f70de433468070a        # LAME 3.100
+
+jobs:
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versao
+        id: ver
+        run: echo "version=${VERSION_BASE}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Ferramentas (MinGW-w64, Ninja, NSIS, ccache)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64 g++-mingw-w64-x86-64-posix ninja-build nsis ccache
+
+      - name: Cache das dependencias
+        uses: actions/cache@v4
+        with:
+          path: external
+          key: deps-${{ env.JUCE_SHA }}-${{ env.RUBBERBAND_SHA }}-${{ env.LAME_SHA }}
+
+      - name: Baixar JUCE, Rubber Band e LAME
+        run: |
+          mkdir -p external
+          get() { # pasta repo commit
+            [ -d "external/$1/.git" ] && return 0
+            git init -q "external/$1"
+            git -C "external/$1" fetch -q --depth 1 "$2" "$3"
+            git -C "external/$1" checkout -q FETCH_HEAD
+          }
+          get JUCE https://github.com/juce-framework/JUCE.git "$JUCE_SHA"
+          get rubberband https://github.com/breakfastquay/rubberband.git "$RUBBERBAND_SHA"
+          get lame https://github.com/lameproject/lame.git "$LAME_SHA"
+
+      - name: Cache de compilacao (ccache)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
+
+      - name: Compilar Ja Mixei.exe
+        run: |
+          cmake -S . -B build-win -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DMEUPAD_VERSION=${{ steps.ver.outputs.version }}
+          cmake --build build-win --target MeuPadStudio
+          x86_64-w64-mingw32-strip "build-win/MeuPadStudio_artefacts/Release/Ja Mixei.exe"
+
+      - name: Instalador (NSIS)
+        run: |
+          mkdir -p installer/payload
+          cp "build-win/MeuPadStudio_artefacts/Release/Ja Mixei.exe" installer/payload/
+          cp LEIA-ME.md installer/payload/
+          cd installer
+          makensis -V2 -DAPPVER=${{ steps.ver.outputs.version }} JaMixei.nsi
+          f="Ja-Mixei-Instalador-${{ steps.ver.outputs.version }}.exe"
+          sha256sum "$f" | awk '{print $1}' > "$f.sha256"
+          ls -la "$f" "$f.sha256"
+
+      - name: Publicar Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=${{ steps.ver.outputs.version }}
+          git log -1 --pretty=%B > notes.txt
+          gh release create "v$v" \
+            "installer/Ja-Mixei-Instalador-$v.exe" \
+            "installer/Ja-Mixei-Instalador-$v.exe.sha256" \
+            --title "Ja Mixei $v" --notes-file notes.txt --latest
+
+      - name: Avisar a VPS (jaclipei.com)
+        env:
+          SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+        run: |
+          v=${{ steps.ver.outputs.version }}
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $SECRET" -H "Content-Type: application/json" \
+              -d "{\"version\":\"$v\"}" https://jaclipei.com/jamixei/deploy-hook)
+            echo "deploy-hook: HTTP $code"
+            [ "$code" = "200" ] || [ "$code" = "202" ] && exit 0
+            sleep 15
+          done
+          echo "::warning::A VPS nao respondeu; o cron dela pega a versao em ate 10 min."

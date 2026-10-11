@@ -1,0 +1,34 @@
+// Recursos do executavel no Windows (gerado pelo CMake): icone e informacoes de versao em portugues
+#include <windows.h>
+
+IDI_ICON1 ICON DISCARDABLE "@MEUPAD_ICON@"
+IDI_ICON2 ICON DISCARDABLE "@MEUPAD_ICON@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION    @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEFLAGSMASK  0x3fL
+FILEFLAGS      0x0L
+FILEOS         VOS_NT_WINDOWS32
+FILETYPE       VFT_APP
+FILESUBTYPE    0x0L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041604E4"
+    BEGIN
+      VALUE "CompanyName",      "Ranariel\0"
+      VALUE "FileDescription",  "Ja Mixei\0"
+      VALUE "FileVersion",      "@PROJECT_VERSION@\0"
+      VALUE "InternalName",     "JaMixei\0"
+      VALUE "LegalCopyright",   "\251 2026 Ranariel\0"
+      VALUE "OriginalFilename", "Ja Mixei.exe\0"
+      VALUE "ProductName",      "Ja Mixei\0"
+      VALUE "ProductVersion",   "@PROJECT_VERSION@\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x416, 1252
+  END
+END

@@ -1,0 +1,8 @@
+build/
+build-*/
+external/
+installer/payload/
+installer/*.exe
+*.user
+.vs/
+__pycache__/
