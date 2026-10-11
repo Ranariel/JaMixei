@@ -36,7 +36,8 @@ jobs:
       - name: Ferramentas (MinGW-w64, Ninja, NSIS, ccache)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq mingw-w64 g++-mingw-w64-x86-64-posix ninja-build nsis ccache
+          sudo apt-get install -y -qq mingw-w64 g++-mingw-w64-x86-64-posix ninja-build nsis ccache \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libfreetype-dev libfontconfig1-dev libasound2-dev libgl-dev
 
       - name: Cache das dependencias
         uses: actions/cache@v4
