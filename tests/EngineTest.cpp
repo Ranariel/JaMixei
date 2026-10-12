@@ -3,6 +3,7 @@
 #include "Session.h"
 #include "Audio/Analysis.h"
 #include "Audio/Renderer.h"
+#include "Audio/Instruments.h"
 
 using namespace mp;
 
@@ -170,6 +171,55 @@ int main()
         CHECK (rms > 0.02, "sinal presente");
         CHECK (std::abs (secs - expect) < 0.05, "duracao exportada correta");
 
+        // exportacao 16 bits / 44,1 kHz (qualidade de CD, com dither)
+        {
+            ExportSettings cd;
+            cd.file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("mp_export_cd.wav");
+            cd.sampleRate = 44100; cd.bitDepth = 16; cd.format = 0;
+            juce::String e3;
+            CHECK (session.renderToFile (cd, [] (float) { return true; }, e3), "exportacao WAV 16 bits concluida");
+            juce::AudioFormatManager fm2; fm2.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> rd (fm2.createReaderFor (cd.file));
+            CHECK (rd != nullptr && rd->bitsPerSample == 16 && (int) rd->sampleRate == 44100, "arquivo 16 bits / 44100 Hz");
+            double pk3, rms3, sec3; bool fin3;
+            analyseFile (cd.file, pk3, rms3, fin3, sec3);
+            CHECK (fin3 && std::abs (sec3 - expect) < 0.05 && pk3 <= 1.0, "duracao e nivel do arquivo de CD");
+        }
+
+        // fim da musica: o motor ao vivo volta ao comeco (repete); a exportacao nao
+        {
+            auto snapR = session.buildSnapshot (44100);
+            const double end = snapR->songEndBeat;
+            const double barEnd = std::ceil (end / snapR->beatsPerBar - 1e-9) * snapR->beatsPerBar;
+            Renderer rr; rr.prepare (44100, 512);
+            rr.playing = true; rr.repeatSong = true; rr.posBeats = barEnd - 0.5;
+            juce::AudioBuffer<float> ob (2, 44100);
+            rr.process (*snapR, ob, 0, ob.getNumSamples());
+            CHECK (rr.posBeats < 3.0, "musica repete do comeco no fim (pos " + std::to_string (rr.posBeats) + ")");
+            rr.posBeats = barEnd + 10.0;   // play depois do fim -> comeca do inicio
+            rr.process (*snapR, ob, 0, 512);
+            CHECK (rr.posBeats < 1.0, "play depois do fim comeca do inicio");
+            Renderer re; re.prepare (44100, 512);
+            re.playing = true; re.repeatSong = false; re.posBeats = barEnd - 0.5;
+            re.process (*snapR, ob, 0, ob.getNumSamples());
+            CHECK (re.posBeats > barEnd, "sem repetir (exportacao) segue em frente");
+
+            // pre-escuta do editor com "Repetir"
+            Renderer rp; rp.prepare (44100, 512);
+            Renderer::Preview pv;
+            pv.buf = session.getSource (srcA)->buffer; pv.sr = 44100; pv.pos = 0; pv.end = 0.25 * 44100; pv.active = true;
+            pv.loop = true; pv.loopStart = 0;
+            { const juce::SpinLock::ScopedLockType sl (rp.previewLock); rp.pendingPreview = pv; rp.previewChanged = true; }
+            juce::AudioBuffer<float> pb (2, 44100);
+            rp.process (*snapR, pb, 0, pb.getNumSamples());
+            CHECK (rp.previewPosSec.load() >= 0.0 && rp.previewPosSec.load() < 0.26, "pre-escuta repete o trecho");
+            CHECK (pb.getMagnitude (0, 30000, 4000) > 0.01f, "pre-escuta continua soando depois de repetir");
+            pv.loop = false;
+            { const juce::SpinLock::ScopedLockType sl (rp.previewLock); rp.pendingPreview = pv; rp.previewChanged = true; }
+            rp.process (*snapR, pb, 0, pb.getNumSamples());
+            CHECK (rp.previewPosSec.load() < 0.0, "sem repetir a pre-escuta para no fim");
+        }
+
         // salvar com copia de audios + abrir
         {
             auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("mp_proj_test");
@@ -255,6 +305,64 @@ int main()
         r.padOn (*snap, 3, 100, 0, 0, -1, true);
         RecordedHit h; int cnt = 0; while (r.recordedHits.pop (h)) ++cnt;
         CHECK (cnt == 1, "gravacao de pad ao vivo");
+    }
+
+    // ---------------------------------------------------------------- instrumentos
+    {
+        std::cout << "== Instrumentos ==" << std::endl;
+        // estimativa de afinacao por autocorrelacao normalizada (diferenca ao quadrado, estilo YIN)
+        auto pitchOf = [] (const juce::AudioBuffer<float>& b, double sr, double t0, double expected)
+        {
+            const int start = (int) (t0 * sr), W = (int) (0.08 * sr);
+            std::vector<float> mono ((size_t) b.getNumSamples());
+            for (int i = 0; i < b.getNumSamples(); ++i) mono[(size_t) i] = b.getSample (0, i) + b.getSample (1, i);
+            const float* x = mono.data();
+            const int minLag = (int) (sr / (expected * 1.5)), maxLag = (int) (sr / (expected / 1.5));
+            std::vector<double> d ((size_t) maxLag + 2, 0.0);
+            for (int lag = 1; lag <= maxLag + 1; ++lag)
+                for (int i = 0; i < W; ++i) { const double e = x[start + i] - x[start + i + lag]; d[(size_t) lag] += e * e; }
+            double run = 0; std::vector<double> cm (d.size(), 1.0);
+            for (size_t lag = 1; lag < d.size(); ++lag) { run += d[lag]; cm[lag] = d[lag] * lag / juce::jmax (1e-12, run); }
+            int best = minLag;
+            for (int lag = minLag; lag <= maxLag; ++lag) if (cm[(size_t) lag] < cm[(size_t) best]) best = lag;
+            const double a = cm[(size_t) best - 1], bb = cm[(size_t) best], c = cm[(size_t) best + 1];
+            const double off = (a - 2 * bb + c) != 0 ? 0.5 * (a - c) / (a - 2 * bb + c) : 0.0;
+            return sr / (best + off);
+        };
+        using namespace instruments;
+        for (int k = 0; k < (int) Id::count; ++k)
+        {
+            const auto id = (Id) k;
+            for (int midi : { 45, 57, 69 })
+            {
+                auto b = renderNote (id, midi, 44100.0);
+                bool fin = true;
+                for (int c = 0; c < 2; ++c) for (int i = 0; i < b.getNumSamples(); ++i) if (! std::isfinite (b.getSample (c, i))) fin = false;
+                const float pk = b.getMagnitude (0, b.getNumSamples());
+                const double exp = 440.0 * std::pow (2.0, (midi - 69) / 12.0);
+                const double t0 = id == Id::Bass808 ? 0.4 : id == Id::Bells ? 1.2 : (id == Id::SynthPad || id == Id::Strings) ? 1.0 : 0.25;
+                const double f = pitchOf (b, 44100.0, t0, exp);
+                const double cents = 1200.0 * std::log2 (f / exp);
+                const bool skipPitch = false;
+                CHECK (fin && pk > 0.02f && pk < 4.0f && (skipPitch || std::abs (cents) < 12.0),
+                       (displayName (id) + " " + noteName (midi) + ": pico " + juce::String (pk, 2) + ", afinacao " + juce::String (cents, 1) + " cents").toStdString());
+            }
+        }
+        Rendered rr;
+        auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("jm_inst_test");
+        dir.deleteRecursively();
+        const auto notes = scaleNotes (48, Scale::Minor);
+        CHECK (notes.size() == 16 && notes[7] == 60 && notes[2] == 51, "escala menor a partir de C3");
+        const bool ok = renderToFile (Id::Piano, notes, dir, rr);
+        CHECK (ok && rr.file.existsAsFile() && rr.regions.size() == 16, "piano gravado em WAV com 16 regioes");
+        double pk2, rms2, sec2; bool fin2;
+        analyseFile (rr.file, pk2, rms2, fin2, sec2);
+        CHECK (fin2 && pk2 > 0.8 && pk2 < 1.0 && sec2 > rr.regions.back().second, "WAV do instrumento normalizado (-1 dB)");
+        for (int k = 0; k < (int) Id::count; ++k)
+        {
+            Rendered r2;
+            renderToFile ((Id) k, scaleNotes (info ((Id) k).defaultOctave * 12 + 12, Scale::Chromatic), juce::File ("/tmp/jm_inst_all"), r2);
+        }
     }
 
     std::cout << (failures == 0 ? "\nTODOS OS TESTES PASSARAM" : "\nFALHAS: " + std::to_string (failures)) << std::endl;

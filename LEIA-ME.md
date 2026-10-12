@@ -95,6 +95,20 @@ instaladas) são lidos pelo decodificador do próprio Windows. Se algum arquivo 
 | Shift ao arrastar | Mover sem a grade |
 | Esc | Parar todas as prévias e sons |
 
+## Novidades da versão 1.4.x (atualização automática)
+
+- **Instrumentos**: botão *Instrumentos* nos pads (ou Ferramentas > Instrumentos). Piano, piano elétrico, órgão,
+  synth lead, synth pad, pluck, baixo 808, baixo synth, cordas, metais, sinos e marimba. Cada pad do banco vira
+  uma nota (escala cromática, maior, menor, pentatônica ou blues, no tom e oitava que você escolher).
+  Toque nos pads, no teclado do PC (Z X C V / A S D F / Q W E R / 1 2 3 4) ou monte a melodia no sequenciador.
+- **Play corrigido**: no fim da música ela volta ao começo e repete; na aba Editor, Play/Espaço toca o sample
+  aberto, e a opção *Repetir* fica tocando o trecho sem parar.
+- **Configurações de áudio novas**: taxa de amostragem 44,1 kHz (qualidade de CD), 48 kHz, 88,2, 96, 176,4 e 192 kHz.
+  Se o driver atual não aceitar a taxa, o Ja Mixei troca sozinho para um que aceite.
+- **Exportação**: WAV 16 bits qualidade de CD (com dither), WAV 24 / 32 bits, FLAC 16 / 24 bits, MP3 e OGG,
+  em 44,1 / 48 / 88,2 / 96 kHz. Gravação também em WAV 16 bits.
+- **Atualização automática**: o programa avisa quando tem versão nova (Ajuda > Procurar atualizações).
+
 ## Novidades da versão 1.4
 
 - **Idiomas:** Português (Brasil, padrão), English, Español e 中文 (chinês simplificado).

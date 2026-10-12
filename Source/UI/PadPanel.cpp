@@ -320,7 +320,10 @@ PadPanel::PadPanel (Session& s) : session (s)
         auto& p = session.project.pads[(size_t) session.selectedPad];
         if (! p.isEmpty() && onOpenInEditor) onOpenInEditor (p.sourceId, p.startSec, p.endSec);
     };
-    for (auto* b : { &revBtn, &loadBtn, &clearBtn, &editBtn }) addAndMakeVisible (*b);
+    for (auto* b : { &revBtn, &loadBtn, &clearBtn, &editBtn, &instBtn }) addAndMakeVisible (*b);
+    instBtn.setTooltip (TR ("Piano, synths, baixo 808, cordas... uma nota em cada pad"));
+    instBtn.setColour (juce::TextButton::buttonColourId, Theme::accent.withAlpha (0.28f));
+    instBtn.onClick = [this] { if (onInstruments) onInstruments(); };
 
     session.addListener (this);
     refreshEditor();
@@ -475,6 +478,7 @@ void PadPanel::resized()
     chokeBox.setBounds (row.removeFromLeft (160)); row.removeFromLeft (6);
     revBtn.setBounds (row.removeFromLeft (76)); row.removeFromLeft (6);
     loadBtn.setBounds (row.removeFromLeft (92)); row.removeFromLeft (6);
+    instBtn.setBounds (row.removeFromLeft (112)); row.removeFromLeft (6);
     editBtn.setBounds (row.removeFromLeft (118)); row.removeFromLeft (6);
     clearBtn.setBounds (row.removeFromLeft (66));
 }

@@ -1,2 +1,4 @@
-- O código do Ja Mixei agora é aberto (software livre, licença GPL v3): github.com/Ranariel/JaMixei
-- Atualização automática: ao abrir, o programa procura versões novas (Ajuda > Procurar atualizações)
+- Instrumentos: piano, piano elétrico, órgão, synths, baixo 808, cordas, metais, sinos e marimba (botão Instrumentos nos pads)
+- Play corrigido: a música repete do começo no fim; na aba Editor, Play/Espaço toca o sample e "Repetir" fica em loop
+- Configurações de áudio novas: 44,1 kHz (qualidade de CD), 48 kHz e outras taxas
+- Exportação em WAV 16 bits qualidade de CD, 24/32 bits, FLAC 16/24 bits, MP3 e OGG

@@ -16,6 +16,8 @@ public:
 
     void open (int sourceId, double selStart, double selEnd);
     void auditionSelection();
+    void togglePlay();      // Play/Espaco na aba Editor: toca (ou para) a selecao/o sample
+    bool hasSource() const;
 
 private:
     class Overview;
@@ -46,6 +48,7 @@ private:
                      chopBtn { TR ("Fatiar") }, clearBtn { TR ("Limpar marcadores") },
                      toPadsBtn { TR ("Fatias -> Pads") }, selPadBtn { TR ("Seleção -> Pad atual") }, selArrBtn { TR ("Seleção -> Arranjo") },
                      playSelBtn { TR ("Ouvir seleção") }, exportBtn { TR ("Exportar seleção...") };
+    juce::ToggleButton loopToggle { TR ("Repetir") };
     juce::ToggleButton chokeToggle { TR ("Fatias se cortam (estilo MPC)") };
     Knob sens { TR ("Sensib."), 0.0, 1.0, 0.5, 0.01 };
     juce::Label bpmLabel;

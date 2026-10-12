@@ -100,6 +100,8 @@ public:
 
     // --- pads ---
     void assignPad (int pad, int sourceId, double s, double e, const juce::String& name);
+    // gera o instrumento (piano, synth...) e coloca uma nota em cada pad do banco
+    void loadInstrument (int instrument, int rootMidi, int scale, int bank, std::function<void (bool ok)> done = {});
     void clearPad (int pad);
     void padDown (int pad, uint8_t vel = 120);
     void padUp (int pad);
@@ -118,7 +120,7 @@ public:
     void seek (double beat) { engine.seek (beat); notify (kChTransport); }
 
     // --- gravacao de audio ---
-    struct AudioRecOptions { bool fromInput = false; bool mp3 = false; bool monitor = false; };
+    struct AudioRecOptions { bool fromInput = false; bool mp3 = false; bool monitor = false; int bits = 24; };
     bool startAudioRecording (const AudioRecOptions& o, juce::String& error);
     void stopAudioRecording();
     bool isAudioRecording() const { return const_cast<AudioEngine&> (engine).isAudioRecording(); }
@@ -155,6 +157,7 @@ private:
     AudioRecOptions recOptions;
     float inputPeakHold = 0;
     bool savedLoopOn = false;
+    std::shared_ptr<bool> aliveFlag = std::make_shared<bool> (true);
 };
 
 } // namespace mp

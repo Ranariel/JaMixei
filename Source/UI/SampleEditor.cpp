@@ -227,12 +227,16 @@ public:
                 a = t;
                 b = juce::jmin (src->lengthSec, t + 8.0);
             }
-            if (! m.empty() || ! (owner.selB > owner.selA && t >= owner.selA && t <= owner.selB))
+            const bool loop = owner.loopToggle.getToggleState();
+            if (! m.empty())
             {
-                if (! m.empty()) { owner.selA = a; owner.selB = b; }
-                owner.session.engine.previewBuffer (src->buffer, src->sampleRate, a, b);
+                owner.selA = a; owner.selB = b;
+                owner.session.engine.previewBuffer (src->buffer, src->sampleRate, a, b, loop);
             }
-            else owner.session.engine.previewBuffer (src->buffer, src->sampleRate, t, owner.selB);
+            else if (owner.selB > owner.selA && t >= owner.selA && t <= owner.selB)
+                owner.session.engine.previewBuffer (src->buffer, src->sampleRate, t, owner.selB, loop, owner.selA);
+            else   // sem selecao: toca daqui ate o fim (e repete o sample inteiro)
+                owner.session.engine.previewBuffer (src->buffer, src->sampleRate, t, src->lengthSec, loop, 0.0);
         }
         dragMarker = -1;
         owner.refreshInfo();
@@ -409,6 +413,15 @@ SampleEditor::SampleEditor (Session& s) : session (s)
     selArrBtn.onClick = [this] { selectionToArrange(); };
     selArrBtn.setTooltip (TR ("Coloca a seleção como novo clipe no arranjo, na posição do cursor (Ctrl+arrastar a seleção também funciona)"));
     playSelBtn.onClick = [this] { auditionSelection(); };
+    playSelBtn.setTooltip (TR ("Toca a seleção (ou o sample inteiro). Espaço também toca/para nesta aba."));
+    loopToggle.setToggleState (session.props.getUserSettings()->getBoolValue ("editorLoop", true), juce::dontSendNotification);
+    loopToggle.setTooltip (TR ("Repete o trecho sem parar enquanto você ouve (Esc ou Espaço para parar)"));
+    loopToggle.onClick = [this]
+    {
+        session.props.getUserSettings()->setValue ("editorLoop", loopToggle.getToggleState());
+        if (session.engine.isPreviewing()) auditionSelection();   // aplica na hora
+    };
+    addAndMakeVisible (loopToggle);
     exportBtn.onClick = [this] { exportSelection(); };
 
     session.addListener (this);
@@ -478,7 +491,9 @@ void SampleEditor::refreshInfo()
         bpmLabel.setText (juce::String (info->bpm, 2), juce::dontSendNotification);
     else bpmLabel.setText ("-", juce::dontSendNotification);
     const bool hasSel = selB > selA;
-    for (auto* b : { &selPadBtn, &selArrBtn, &playSelBtn, &exportBtn, &zoomSelBtn }) b->setEnabled (hasSel);
+    for (auto* b : { &selPadBtn, &selArrBtn, &exportBtn, &zoomSelBtn }) b->setEnabled (hasSel);
+    playSelBtn.setButtonText (hasSel ? TR ("Ouvir seleção") : TR ("Ouvir tudo"));
+    playSelBtn.setEnabled (session.getSource (session.editorSourceId) != nullptr);
     int count = 0;
     {
         double a, b;
@@ -616,8 +631,18 @@ void SampleEditor::selectionToArrange()
 void SampleEditor::auditionSelection()
 {
     auto src = session.getSource (session.editorSourceId);
-    if (src == nullptr || ! (selB > selA)) return;
-    session.engine.previewBuffer (src->buffer, src->sampleRate, selA, selB);
+    if (src == nullptr) return;
+    const bool loop = loopToggle.getToggleState();
+    if (selB > selA) session.engine.previewBuffer (src->buffer, src->sampleRate, selA, selB, loop);
+    else session.engine.previewBuffer (src->buffer, src->sampleRate, 0.0, src->lengthSec, loop);
+}
+
+bool SampleEditor::hasSource() const { return session.getSource (session.editorSourceId) != nullptr; }
+
+void SampleEditor::togglePlay()
+{
+    if (session.engine.isPreviewing()) session.engine.stopPreview();
+    else auditionSelection();
 }
 
 void SampleEditor::exportSelection()
@@ -681,7 +706,8 @@ void SampleEditor::resized()
     beatBox.setBounds (b1.withWidth (180).withSizeKeepingCentre (180, 28));
     b1.removeFromLeft (mode == 1 ? 6 : 190);
     chopBtn.setBounds (b1.removeFromLeft (90).withSizeKeepingCentre (90, 28)); b1.removeFromLeft (6);
-    clearBtn.setBounds (b1.removeFromLeft (140).withSizeKeepingCentre (140, 28));
+    clearBtn.setBounds (b1.removeFromLeft (140).withSizeKeepingCentre (140, 28)); b1.removeFromLeft (14);
+    loopToggle.setBounds (b1.removeFromLeft (110).withSizeKeepingCentre (110, 28));
 
     auto b2 = bottom2;
     toPadsBtn.setBounds (b2.removeFromLeft (150)); b2.removeFromLeft (6);

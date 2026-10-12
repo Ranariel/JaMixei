@@ -1,5 +1,6 @@
 #include "I18n.h"
 #include "Session.h"
+#include "Audio/Instruments.h"
 #include "Audio/Analysis.h"
 #include "Audio/Mp3Format.h"
 
@@ -26,6 +27,7 @@ Session::Session()
 
 Session::~Session()
 {
+    *aliveFlag = false;
     stopTimer();
     if (auto xml = engine.devices().createStateXml())
         props.getUserSettings()->setValue ("audioDevice", xml.get());
@@ -420,6 +422,54 @@ void Session::assignPad (int pad, int sourceId, double s, double e, const juce::
     commit (kChPads);
 }
 
+void Session::loadInstrument (int instrument, int rootMidi, int scale, int bank, std::function<void (bool)> done)
+{
+    using namespace instruments;
+    const auto id = (Id) juce::jlimit (0, (int) Id::count - 1, instrument);
+    bank = juce::jlimit (0, kNumBanks - 1, bank);
+    const auto notes = scaleNotes (rootMidi, (Scale) juce::jlimit (0, (int) Scale::count - 1, scale), kPadsPerBank);
+    const auto name = displayName (id);
+    setStatus (TR ("Gerando o instrumento ") + name + "...");
+    auto folder = dataFolder().getChildFile ("Instrumentos");
+    auto alive = aliveFlag;
+    juce::Thread::launch ([this, alive, id, notes, folder, name, bank, done]
+    {
+        Rendered r;
+        const bool ok = instruments::renderToFile (id, notes, folder, r);
+        juce::MessageManager::callAsync ([this, alive, ok, r, id, name, bank, done]
+        {
+            if (! *alive) return;
+            if (! ok) { setStatus (TR ("Não foi possível gerar o instrumento")); if (done) done (false); return; }
+            importFile (r.file, [this, r, id, name, bank, done] (int sourceId)
+            {
+                const auto& in = info (id);
+                beginEdit (TR ("Carregar instrumento"));
+                for (int i = 0; i < kPadsPerBank && i < (int) r.regions.size(); ++i)
+                {
+                    auto& p = project.pads[(size_t) (bank * kPadsPerBank + i)];
+                    p = Pad();
+                    p.sourceId = sourceId;
+                    p.startSec = r.regions[(size_t) i].first;
+                    p.endSec = r.regions[(size_t) i].second;
+                    p.name = name + " " + noteName (r.notes[(size_t) i]);
+                    p.mode = in.sustained ? PadMode::Gate : PadMode::OneShot;
+                    p.releaseMs = in.sustained ? 220.0f : 60.0f;
+                    // baixos sao monofonicos: uma nota corta a outra
+                    p.chokeGroup = (id == Id::Bass808 || id == Id::SynthBass) ? 8 : 0;
+                    p.colour = juce::Colour (in.colour);
+                }
+                if (auto* si = project.findSource (sourceId)) { si->name = name; si->bpm = project.bpm; si->bpmDetected = false; }
+                currentBank = bank;
+                selectedPad = bank * kPadsPerBank;
+                commit (kChPads | kChSources);
+                setStatus (name + TR (" carregado no banco ") + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
+                           + TR ("  |  toque nos pads ou no teclado (Z X C V / A S D F / Q W E R / 1 2 3 4)"));
+                if (done) done (true);
+            });
+        });
+    });
+}
+
 void Session::clearPad (int pad)
 {
     if (! juce::isPositiveAndBelow (pad, kNumPads)) return;
@@ -575,7 +625,7 @@ bool Session::startAudioRecording (const AudioRecOptions& o, juce::String& error
     const juce::String base = (o.fromInput ? TR ("Gravação ") : juce::String (TR ("Mix "))) + stamp;
     auto file = recordingsFolder().getNonexistentChildFile (base, recOptions.mp3 ? ".mp3" : ".wav", false);
     if (! engine.startAudioRecording (file, o.fromInput ? AudioEngine::RecSource::Input : AudioEngine::RecSource::Output,
-                                      recOptions.mp3, o.monitor, error))
+                                      recOptions.mp3, o.monitor, error, recOptions.bits))
     {
         if (o.fromInput) { juce::String e2; engine.setInputEnabled (false, e2); }
         return false;
@@ -805,12 +855,24 @@ bool Session::renderToFile (const ExportSettings& es, std::function<bool (float)
 
     juce::AudioBuffer<float> buf (2, 4096);
     juce::int64 done = 0;
+    const bool dither = bits == 16 && (es.format == 0 || es.format == 1);
+    juce::Random ditherRng (12345);
     while (done < total)
     {
         int n = (int) std::min<juce::int64> (4096, total - done);
         if (done < bodySamples) n = (int) std::min<juce::int64> (n, bodySamples - done);
         else renderer->playing = false;
         renderer->process (*s, buf, 0, n);
+        if (dither)
+        {
+            // dither TPDF de 1 LSB: 16 bits (qualidade de CD) sem distorcao de quantizacao nas partes baixas
+            const float lsb = 1.0f / 32768.0f;
+            for (int c = 0; c < 2; ++c)
+            {
+                auto* d = buf.getWritePointer (c);
+                for (int i = 0; i < n; ++i) d[i] += (ditherRng.nextFloat() - ditherRng.nextFloat()) * lsb;
+            }
+        }
         writer->writeFromAudioSampleBuffer (buf, 0, n);
         done += n;
         if (progress && ! progress ((float) done / (float) total))

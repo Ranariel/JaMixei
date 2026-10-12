@@ -18,6 +18,9 @@ public:
     std::function<void (int menu, int item)> onMenuItem;
     std::function<void()> onAudioSettings;
     std::function<void()> onAudioRecord;
+    std::function<void()> onPlay, onStop;          // opcional: a janela decide o que o Play toca (ex.: aba Editor)
+    std::function<bool()> isExtraPlaying;          // ex.: pre-escuta do editor tocando
+    bool playingNow() const { return session.engine.isPlaying() || (isExtraPlaying && isExtraPlaying()); }
 
     static constexpr int preferredHeight = 64;
 

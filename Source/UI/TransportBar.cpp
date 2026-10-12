@@ -109,8 +109,8 @@ TransportBar::TransportBar (Session& s) : session (s)
     metroBtn.onColour = Theme::accent2;
     undoBtn.onClick = [this] { session.undo(); };
     redoBtn.onClick = [this] { session.redo(); };
-    playBtn.onClick = [this] { session.togglePlay(); };
-    stopBtn.onClick = [this] { session.stopTransport(); };
+    playBtn.onClick = [this] { if (onPlay) onPlay(); else session.togglePlay(); refresh(); };
+    stopBtn.onClick = [this] { if (onStop) onStop(); session.stopTransport(); refresh(); };
     recBtn.onClick = [this] { session.toggleRecord(); };
     loopBtn.onClick = [this] { session.beginEdit (TR ("Loop")); session.project.loopOn = ! session.project.loopOn; session.commit (kChTransport); };
     metroBtn.onClick = [this] { session.project.metronome = ! session.project.metronome; session.commit (kChTransport); };
@@ -162,7 +162,7 @@ TransportBar::~TransportBar() { session.removeListener (this); }
 
 void TransportBar::refresh()
 {
-    playBtn.setToggleState (session.engine.isPlaying(), juce::dontSendNotification);
+    playBtn.setToggleState (playingNow(), juce::dontSendNotification);
     recBtn.setToggleState (session.recording, juce::dontSendNotification);
     micBtn.setToggleState (session.isAudioRecording(), juce::dontSendNotification);
     loopBtn.setToggleState (session.project.loopOn, juce::dontSendNotification);
@@ -186,7 +186,7 @@ void TransportBar::timerCallback()
     if (pos != lastPos) { lastPos = pos; position->repaint(); }
     if (micBtn.getToggleState() != session.isAudioRecording()) refresh();
     if (session.isAudioRecording()) micBtn.repaint();
-    if (playBtn.getToggleState() != session.engine.isPlaying()) refresh();
+    if (playBtn.getToggleState() != playingNow()) refresh();
     if (undoBtn.isEnabled() != session.history.canUndo() || redoBtn.isEnabled() != session.history.canRedo()) refresh();
     meterL.tick();
     meterR.tick();

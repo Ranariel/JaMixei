@@ -1,4 +1,6 @@
 #include "MainComponent.h"
+#include "../Audio/Instruments.h"
+#include "AudioSettings.h"
 
 namespace mp
 {
@@ -217,6 +219,7 @@ MainComponent::MainComponent (Session& s) : session (s)
     auto openEditor = [this] (int sourceId, double a, double b) { editor->open (sourceId, a, b); showTab (1); };
     arrange->onOpenInEditor = openEditor;
     pads->onOpenInEditor = openEditor;
+    pads->onInstruments = [this] { showInstruments(); };
     browser->onOpenInEditor = openEditor;
     arrange->onShowSequencer = [this] { showTab (2); };
 
@@ -224,6 +227,10 @@ MainComponent::MainComponent (Session& s) : session (s)
     transport->onMenuItem = [this] (int m, int i) { menuItem (m, i); };
     transport->onAudioSettings = [this] { showAudioSettings(); };
     transport->onAudioRecord = [this] { audioRecordClicked(); };
+    // na aba Editor, o Play toca o sample aberto (com "Repetir"); nas outras abas, a musica/padrao
+    transport->onPlay = [this] { playPressed(); };
+    transport->onStop = [this] { session.engine.stopPreview(); };
+    transport->isExtraPlaying = [this] { return currentTab == 1 && session.engine.isPreviewing(); };
 
     browserWidth = session.props.getUserSettings()->getIntValue ("browserWidth3", 380);
     padHeight = session.props.getUserSettings()->getIntValue ("padHeight", 300);
@@ -248,6 +255,16 @@ MainComponent::MainComponent (Session& s) : session (s)
         session.setStatus (TR ("Aceleração por GPU desligada (problema na última abertura). Religue em Ferramentas."));
     }
     setGpuEnabled (wantGpu, false);
+
+    // taxa de amostragem muito alta (ex.: Windows configurado em 192 kHz) gasta CPU a toa: avisa
+    juce::Timer::callAfterDelay (3000, [safe = juce::Component::SafePointer<MainComponent> (this)]
+    {
+        if (safe == nullptr) return;
+        if (auto* dev = safe->session.engine.devices().getCurrentAudioDevice())
+            if (dev->getCurrentSampleRate() > 50000)
+                safe->session.setStatus (TR ("Taxa de amostragem alta (") + juce::String (dev->getCurrentSampleRate() / 1000.0, 1)
+                                         + TR (" kHz): para usar menos CPU, escolha 44,1 kHz (qualidade de CD) em Ferramentas > Configurações de áudio"));
+    });
 
     // atualizacao automatica: procura uma versao nova alguns segundos depois de abrir
     updater = std::make_unique<Updater> (*settings, [this] (juce::File installer) { installUpdate (installer); });
@@ -448,8 +465,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         for (int i = 0; i < 16; ++i)
             if (code == padKeyCode (i) || upper == (juce::juce_wchar) padKeyCode (i)) return true;   // tratado em keyStateChanged
 
-    if (key == juce::KeyPress::spaceKey) { session.togglePlay(); return true; }
-    if (key == juce::KeyPress::returnKey) { if (session.engine.isPlaying()) session.engine.stop(); session.stopTransport(); return true; }
+    if (key == juce::KeyPress::spaceKey) { playPressed(); return true; }
+    if (key == juce::KeyPress::returnKey) { session.engine.stopPreview(); if (session.engine.isPlaying()) session.engine.stop(); session.stopTransport(); return true; }
     if (key == juce::KeyPress::homeKey) { session.seek (0); return true; }
     if (key == juce::KeyPress::escapeKey) { session.engine.stopPreview(); session.engine.stopFilePreview(); session.engine.panic(); return true; }
     if (key == juce::KeyPress::tabKey) { session.setSongMode (! session.songMode); return true; }
@@ -556,6 +573,8 @@ juce::PopupMenu MainComponent::getMenu (int index)
     }
     else if (index == 2)
     {
+        m.addItem (8, TR ("Instrumentos (piano, synth, baixo 808...)"));
+        m.addSeparator();
         m.addItem (1, TR ("Reamostrar o loop para o pad selecionado (estilo MPC)"));
         m.addItem (2, TR ("Exportar só o loop..."));
         m.addSeparator();
@@ -655,6 +674,7 @@ void MainComponent::menuItem (int menu, int item)
         if (item == 3) arrange->zoomToFit();
         if (item == 4) { session.project.metronome = ! session.project.metronome; session.commit (kChTransport); }
         if (item == 5) showAudioSettings();
+        if (item == 8) showInstruments();
         if (item == 6) session.engine.panic();
         if (item == 7)
         {
@@ -720,6 +740,17 @@ void MainComponent::installUpdate (juce::File installer)
         safe->skipDiscard = true;
         juce::JUCEApplication::getInstance()->systemRequestedQuit();
     });
+}
+
+void MainComponent::playPressed()
+{
+    if (currentTab == 1 && editor->hasSource() && ! session.engine.isPlaying() && ! session.isAudioRecording())
+    {
+        editor->togglePlay();
+        return;
+    }
+    session.engine.stopPreview();
+    session.togglePlay();
 }
 
 void MainComponent::confirmDiscard (std::function<void()> then)
@@ -841,21 +872,32 @@ void MainComponent::importAudio()
 void MainComponent::exportAudio()
 {
     auto* aw = new juce::AlertWindow (TR ("Exportar mixagem"), TR ("Renderiza o arranjo (modo MÚSICA) com todos os efeitos."), juce::MessageBoxIconType::NoIcon);
-    aw->addComboBox ("fmt", { TR ("MP3 320 kbps (melhor qualidade)"), "MP3 256 kbps", "MP3 192 kbps", TR ("MP3 128 kbps (arquivo menor)"),
-                              TR ("WAV 24 bits (sem perdas)"), TR ("WAV 16 bits (qualidade de CD)"), TR ("FLAC 24 bits (sem perdas, compactado)"), "OGG Vorbis" }, TR ("Formato"));
-    aw->addComboBox ("sr", { "44100 Hz", "48000 Hz" }, TR ("Taxa de amostragem"));
+    aw->addComboBox ("fmt", { TR ("WAV 16 bits - qualidade de CD"), TR ("WAV 24 bits (estúdio, sem perdas)"), TR ("WAV 32 bits float (máxima precisão)"),
+                              TR ("FLAC 16 bits (qualidade de CD, compactado)"), TR ("FLAC 24 bits (sem perdas, compactado)"),
+                              TR ("MP3 320 kbps (melhor qualidade)"), "MP3 256 kbps", "MP3 192 kbps", TR ("MP3 128 kbps (arquivo menor)"), "OGG Vorbis" }, TR ("Formato"));
+    aw->addComboBox ("sr", { TR ("44.100 Hz - qualidade de CD"), TR ("48.000 Hz - vídeo (YouTube, Reels)"), "88.200 Hz", "96.000 Hz" }, TR ("Taxa de amostragem"));
     aw->addComboBox ("range", { TR ("Música inteira"), TR ("Somente a região de loop") }, TR ("Trecho"));
+    auto* settings = session.props.getUserSettings();
+    aw->getComboBoxComponent ("fmt")->setSelectedItemIndex (juce::jlimit (0, 9, settings->getIntValue ("exportFmt2", 0)));
+    aw->getComboBoxComponent ("sr")->setSelectedItemIndex (juce::jlimit (0, 3, settings->getIntValue ("exportSr2", 0)));
     aw->addButton (TR ("Escolher arquivo..."), 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton (TR ("Cancelar"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, aw] (int r)
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, aw, settings] (int r)
     {
         if (r != 1) return;
         ExportSettings es;
         const int fmt = aw->getComboBoxComponent ("fmt")->getSelectedItemIndex();
-        if (fmt <= 3) { es.format = 3; es.mp3Quality = fmt; }
-        else es.format = fmt == 6 ? 1 : fmt == 7 ? 2 : 0;
-        es.bitDepth = fmt == 5 ? 16 : 24;
-        es.sampleRate = aw->getComboBoxComponent ("sr")->getSelectedItemIndex() == 1 ? 48000.0 : 44100.0;
+        const int srIdx = aw->getComboBoxComponent ("sr")->getSelectedItemIndex();
+        settings->setValue ("exportFmt2", fmt);
+        settings->setValue ("exportSr2", srIdx);
+        if (fmt <= 2)      { es.format = 0; es.bitDepth = fmt == 0 ? 16 : fmt == 1 ? 24 : 32; }
+        else if (fmt <= 4) { es.format = 1; es.bitDepth = fmt == 3 ? 16 : 24; }
+        else if (fmt <= 8) { es.format = 3; es.mp3Quality = fmt - 5; es.bitDepth = 16; }
+        else               { es.format = 2; es.bitDepth = 16; }
+        const double rates[] = { 44100.0, 48000.0, 88200.0, 96000.0 };
+        es.sampleRate = rates[juce::jlimit (0, 3, srIdx)];
+        if (es.format == 3 && es.sampleRate > 48000.0)   // MP3 vai no maximo ate 48 kHz
+            es.sampleRate = es.sampleRate == 88200.0 ? 44100.0 : 48000.0;
         es.onlyLoop = aw->getComboBoxComponent ("range")->getSelectedItemIndex() == 1;
         const juce::String ext = es.format == 1 ? ".flac" : es.format == 2 ? ".ogg" : es.format == 3 ? ".mp3" : ".wav";
         auto name = session.project.projectFile == juce::File() ? juce::String (TR ("Meu remix")) : session.project.projectFile.getFileNameWithoutExtension();
@@ -890,10 +932,12 @@ void MainComponent::audioRecordClicked()
         juce::MessageBoxIconType::NoIcon);
     aw->addComboBox ("src", { (TR ("Tudo que está tocando: música + pads tocados ao vivo (mix)")),
                               TR ("Microfone / entrada de áudio (voz, instrumento)") }, TR ("Fonte"));
-    aw->addComboBox ("fmt", { TR ("MP3 320 kbps"), TR ("WAV 24 bits (sem perdas)") }, TR ("Formato (mix)"));
+    const double devRate = session.engine.getSampleRate();
+    aw->addComboBox ("fmt", { TR ("MP3 320 kbps"), TR ("WAV 24 bits (sem perdas)"), TR ("WAV 16 bits (qualidade de CD)") },
+                     TR ("Formato") + "  (" + juce::String (devRate / 1000.0, 1) + " kHz)");
     aw->addComboBox ("mon", { TR ("Não ouvir a entrada"), TR ("Ouvir a entrada enquanto grava (use fone de ouvido!)") },
                      TR ("Monitoração (microfone)"));
-    aw->addTextBlock ((TR ("Microfone: a gravação entra numa faixa de áudio do arranjo, alinhada com a música.\n") + TR ("Mix: gera um arquivo com tudo que você ouvir (ótimo para gravar os pads por cima da música).\n") + TR ("Arquivos em Documentos\\Ja Mixei\\Gravações.")));
+    aw->addTextBlock ((TR ("Microfone: a gravação entra numa faixa de áudio do arranjo, alinhada com a música.\n") + TR ("Mix: gera um arquivo com tudo que você ouvir (ótimo para gravar os pads por cima da música).\n") + TR ("Arquivos em Documentos\\Ja Mixei\\Gravações.\n") + TR ("A gravação usa a taxa da placa de som; para qualidade de CD use 44,1 kHz em Configurações de áudio.")));
     aw->addButton (TR ("● Gravar"), 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton (TR ("Cancelar"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, aw] (int r)
@@ -901,7 +945,9 @@ void MainComponent::audioRecordClicked()
         if (r != 1) return;
         Session::AudioRecOptions o;
         o.fromInput = aw->getComboBoxComponent ("src")->getSelectedItemIndex() == 1;
-        o.mp3 = aw->getComboBoxComponent ("fmt")->getSelectedItemIndex() == 0;
+        const int f = aw->getComboBoxComponent ("fmt")->getSelectedItemIndex();
+        o.mp3 = f == 0;
+        o.bits = f == 2 ? 16 : 24;
         o.monitor = aw->getComboBoxComponent ("mon")->getSelectedItemIndex() == 1;
         juce::String err;
         if (! session.startAudioRecording (o, err))
@@ -945,16 +991,65 @@ void MainComponent::resampleLoopToPad()
 
 void MainComponent::showAudioSettings()
 {
-    auto* sel = new juce::AudioDeviceSelectorComponent (session.engine.devices(), 0, 0, 2, 2, false, false, true, false);
-    sel->setSize (620, 460);
+    auto* panel = new AudioSettingsPanel (session.engine.devices());
     juce::DialogWindow::LaunchOptions o;
-    o.content.setOwned (sel);
+    o.content.setOwned (panel);
     o.dialogTitle = TR ("Configurações de áudio");
     o.dialogBackgroundColour = Theme::panel;
     o.escapeKeyTriggersCloseButton = true;
     o.useNativeTitleBar = true;
     o.resizable = false;
     o.launchAsync();
+}
+
+// ----------------------------------------------------------------------------
+//  Instrumentos: piano, synths, baixos... uma nota em cada pad do banco
+// ----------------------------------------------------------------------------
+void MainComponent::showInstruments()
+{
+    using namespace instruments;
+    auto* settings = session.props.getUserSettings();
+    auto* aw = new juce::AlertWindow (TR ("Instrumentos"),
+        TR ("Escolha um instrumento: cada pad do banco vira uma nota. Toque nos pads, no teclado do PC ou monte a melodia no sequenciador."),
+        juce::MessageBoxIconType::NoIcon);
+    juce::StringArray names;
+    for (int i = 0; i < (int) Id::count; ++i) names.add (displayName ((Id) i));
+    aw->addComboBox ("inst", names, TR ("Instrumento"));
+    juce::StringArray keys { TR ("C (Dó)"), TR ("C# (Dó#)"), TR ("D (Ré)"), TR ("D# (Ré#)"), TR ("E (Mi)"), TR ("F (Fá)"),
+                             TR ("F# (Fá#)"), TR ("G (Sol)"), TR ("G# (Sol#)"), TR ("A (Lá)"), TR ("A# (Lá#)"), TR ("B (Si)") };
+    aw->addComboBox ("key", keys, TR ("Tom (primeira nota)"));
+    aw->addComboBox ("oct", { TR ("Automática (a melhor para o instrumento)"), TR ("Oitava 1 (bem grave)"), TR ("Oitava 2"),
+                              TR ("Oitava 3"), TR ("Oitava 4 (dó central)"), TR ("Oitava 5 (agudo)") }, TR ("Oitava"));
+    juce::StringArray scales;
+    for (int i = 0; i < (int) Scale::count; ++i) scales.add (scaleName ((Scale) i));
+    aw->addComboBox ("scale", scales, TR ("Escala"));
+    juce::StringArray banks;
+    for (int b = 0; b < kNumBanks; ++b) banks.add (TR ("Banco ") + juce::String::charToString ((juce::juce_wchar) ('A' + b)));
+    aw->addComboBox ("bank", banks, TR ("Colocar no"));
+    aw->addTextBlock (TR ("Os 16 pads do banco escolhido serão substituídos (Ctrl+Z desfaz).\nPads 1 a 16 = notas em ordem, do grave para o agudo."));
+    aw->getComboBoxComponent ("inst")->setSelectedItemIndex (juce::jlimit (0, names.size() - 1, settings->getIntValue ("instLast", 0)));
+    aw->getComboBoxComponent ("key")->setSelectedItemIndex (juce::jlimit (0, 11, settings->getIntValue ("instKey", 0)));
+    aw->getComboBoxComponent ("oct")->setSelectedItemIndex (juce::jlimit (0, 5, settings->getIntValue ("instOct", 0)));
+    aw->getComboBoxComponent ("scale")->setSelectedItemIndex (juce::jlimit (0, scales.size() - 1, settings->getIntValue ("instScale", 0)));
+    aw->getComboBoxComponent ("bank")->setSelectedItemIndex (juce::jlimit (0, kNumBanks - 1, session.currentBank));
+    aw->addButton (TR ("Carregar nos pads"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton (TR ("Cancelar"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, aw, settings] (int r)
+    {
+        if (r != 1) return;
+        const int inst = aw->getComboBoxComponent ("inst")->getSelectedItemIndex();
+        const int key = aw->getComboBoxComponent ("key")->getSelectedItemIndex();
+        const int oct = aw->getComboBoxComponent ("oct")->getSelectedItemIndex();
+        const int scale = aw->getComboBoxComponent ("scale")->getSelectedItemIndex();
+        const int bank = aw->getComboBoxComponent ("bank")->getSelectedItemIndex();
+        settings->setValue ("instLast", inst);
+        settings->setValue ("instKey", key);
+        settings->setValue ("instOct", oct);
+        settings->setValue ("instScale", scale);
+        const int octave = oct == 0 ? instruments::info ((instruments::Id) inst).defaultOctave : oct;
+        const int root = (octave + 1) * 12 + key;      // C4 = 60 (do central)
+        session.loadInstrument (inst, root, scale, bank);
+    }), true);
 }
 
 void MainComponent::showShortcuts()

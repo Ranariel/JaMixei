@@ -250,6 +250,15 @@ void Renderer::renderChunk (const Snapshot& snap, float* L, float* R, int n)
                 ls = 0; le = pat.length / (double) kStepsPerBeat; loopOn = true;
                 if (posBeats >= le || posBeats < 0) posBeats = std::fmod (juce::jmax (0.0, posBeats), le);
             }
+            else if (! loopOn && repeatSong && snap.songEndBeat > 0.01)
+            {
+                // fim da musica: volta ao comeco e continua (repete), fechando o compasso
+                const double bar = (double) juce::jmax (1, snap.beatsPerBar);
+                ls = 0;
+                le = std::ceil (snap.songEndBeat / bar - 1.0e-9) * bar;
+                loopOn = true;
+                if (posBeats >= le) posBeats = 0;   // play depois do fim: comeca do inicio
+            }
             int segLen = rem;
             bool wrap = false;
             if (loopOn && posBeats < le)
@@ -613,12 +622,21 @@ void Renderer::processMaster (const Snapshot& snap, float* L, float* R, int n)
         const float* d1 = b.getNumChannels() > 1 ? b.getReadPointer (1) : d0;
         const double inc = preview.sr / sr;
         const int frames = b.getNumSamples();
+        const double fadeLen = preview.sr * 0.005;
         for (int i = 0; i < n; ++i)
         {
-            if (preview.pos >= preview.end || preview.pos >= frames) { preview.active = false; break; }
+            if (preview.pos >= preview.end || preview.pos >= frames)
+            {
+                // "Repetir" ligado: volta ao inicio do trecho e continua tocando
+                if (preview.loop && preview.end - preview.loopStart > fadeLen * 4)
+                    preview.pos = preview.loopStart;
+                else { preview.active = false; break; }
+            }
             float fade = 1.0f;
             const double rem = preview.end - preview.pos;
-            if (rem < preview.sr * 0.005) fade = (float) (rem / (preview.sr * 0.005));
+            if (rem < fadeLen) fade = (float) (rem / fadeLen);
+            if (preview.loop && preview.pos - preview.loopStart < fadeLen && preview.pos >= preview.loopStart)
+                fade = juce::jmin (fade, (float) ((preview.pos - preview.loopStart) / fadeLen + 0.02));
             L[i] += hermite (d0, frames, preview.pos) * preview.gain * fade;
             R[i] += hermite (d1, frames, preview.pos) * preview.gain * fade;
             preview.pos += inc;

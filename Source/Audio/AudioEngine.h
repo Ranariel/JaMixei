@@ -36,7 +36,8 @@ public:
     void panic() { panicReq = true; }
 
     // --- pre-escuta ---
-    void previewBuffer (BufferPtr buf, double sr, double startSec, double endSec);
+    void previewBuffer (BufferPtr buf, double sr, double startSec, double endSec, bool loop = false, double loopStartSec = -1);
+    bool isPreviewing() const { return renderer.previewPosSec.load() >= 0.0; }
     void stopPreview();
     double getPreviewPositionSec() const { return renderer.previewPosSec.load(); }
     bool previewFile (const juce::File& f, juce::AudioFormatManager& fm);
@@ -54,7 +55,7 @@ public:
         bool fromInput = false;
         bool gotAudio = false;
     };
-    bool startAudioRecording (const juce::File& file, RecSource source, bool mp3, bool monitorInput, juce::String& error);
+    bool startAudioRecording (const juce::File& file, RecSource source, bool mp3, bool monitorInput, juce::String& error, int bits = 24);
     RecordingInfo stopAudioRecording();
     bool isAudioRecording() const { return audioRecording.load(); }
     double getRecordedSeconds() const { return recSamples.load() / juce::jmax (1.0, sampleRate.load()); }

@@ -57,7 +57,7 @@ private:
          attack { TR ("Ataque"), 0.0, 500.0, 1.0, 0.1 }, release { TR ("Release"), 1.0, 3000.0, 40.0, 1.0 },
          cutoff { TR ("Filtro"), 40.0, 20000.0, 20000.0, 1.0 }, reso { TR ("Resson."), 0.0, 1.0, 0.1, 0.01 };
     juce::ComboBox modeBox, chokeBox;
-    juce::TextButton revBtn { TR ("Reverso") }, loadBtn { TR ("Carregar...") }, clearBtn { TR ("Limpar") }, editBtn { TR ("Abrir no editor") };
+    juce::TextButton revBtn { TR ("Reverso") }, loadBtn { TR ("Carregar...") }, instBtn { TR ("Instrumentos") }, clearBtn { TR ("Limpar") }, editBtn { TR ("Abrir no editor") };
     int dragOverPad = -1;
     std::array<int, kNumPads> lastActivity {};
     std::array<float, kNumPads> flash {};
@@ -66,6 +66,7 @@ private:
 
 public:
     std::function<void (int sourceId, double s, double e)> onOpenInEditor;
+    std::function<void()> onInstruments;
 };
 
 } // namespace mp

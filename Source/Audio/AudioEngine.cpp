@@ -65,13 +65,15 @@ void AudioEngine::play()  { playReq = 1; uiPlaying = true; }
 void AudioEngine::stop()  { playReq = 0; uiPlaying = false; }
 void AudioEngine::seek (double beat) { seekPos = juce::jmax (0.0, beat); seekReq = true; uiPos = juce::jmax (0.0, beat); }
 
-void AudioEngine::previewBuffer (BufferPtr buf, double sr, double startSec, double endSec)
+void AudioEngine::previewBuffer (BufferPtr buf, double sr, double startSec, double endSec, bool loop, double loopStartSec)
 {
     Renderer::Preview p;
     p.buf = std::move (buf);
     p.sr = sr;
     p.pos = juce::jmax (0.0, startSec * sr);
     p.end = endSec * sr;
+    p.loop = loop;
+    p.loopStart = juce::jmax (0.0, (loopStartSec < 0 ? startSec : loopStartSec) * sr);
     p.active = p.buf != nullptr && p.end > p.pos;
     const juce::SpinLock::ScopedLockType sl (renderer.previewLock);
     renderer.pendingPreview = p;
@@ -176,6 +178,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* in, int 
 
     renderer.patternMode = patternModeReq.load();
     renderer.recording = recordingReq.load();
+    renderer.repeatSong = ! audioRecording.load();   // gravando audio: segue em frente sem repetir
     if (seekReq.exchange (false)) renderer.posBeats = seekPos.load();
     const int pr = playReq.exchange (-1);
     if (pr == 1) renderer.playing = true;
@@ -271,7 +274,7 @@ bool AudioEngine::setInputEnabled (bool enabled, juce::String& error)
     return error.isEmpty();
 }
 
-bool AudioEngine::startAudioRecording (const juce::File& file, RecSource source, bool mp3, bool monitorInput, juce::String& error)
+bool AudioEngine::startAudioRecording (const juce::File& file, RecSource source, bool mp3, bool monitorInput, juce::String& error, int bits)
 {
     if (audioRecording) { error = TR ("Ja esta gravando"); return false; }
     file.getParentDirectory().createDirectory();
@@ -282,7 +285,7 @@ bool AudioEngine::startAudioRecording (const juce::File& file, RecSource source,
     if (mp3) fmt = std::make_unique<Mp3AudioFormat>();
     else fmt = std::make_unique<juce::WavAudioFormat>();
     const double sr = sampleRate.load();
-    std::unique_ptr<juce::AudioFormatWriter> w (fmt->createWriterFor (stream.get(), sr, 2, 24, {}, 0));
+    std::unique_ptr<juce::AudioFormatWriter> w (fmt->createWriterFor (stream.get(), sr, 2, mp3 ? 16 : (bits == 16 ? 16 : 24), {}, 0));
     if (w == nullptr) { error = TR ("Formato de gravacao indisponivel"); return false; }
     stream.release();
     auto tw = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (w.release(), recThread, (int) (sr * 4));

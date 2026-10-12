@@ -69,6 +69,7 @@ public:
     bool playing = false;
     bool patternMode = false;
     bool recording = false;
+    bool repeatSong = false;   // modo MUSICA sem loop: no fim volta ao comeco (o motor ao vivo liga; exportacao nao)
 
     void padOn (const Snapshot& snap, int pad, uint8_t vel, int slot, int offset, int gateSamples, bool fromLive);
     void padOff (int pad);
@@ -87,6 +88,7 @@ public:
     struct Preview
     {
         BufferPtr buf; double sr = 44100; double pos = 0, end = 0; bool active = false; float gain = 0.9f;
+        bool loop = false; double loopStart = 0;   // repetir o trecho (em amostras da fonte)
     };
     juce::SpinLock previewLock;
     Preview pendingPreview; bool previewChanged = false;

@@ -54,6 +54,8 @@ private:
     void audioRecordClicked();
     void showAudioSettings();
     void showShortcuts();
+    void showInstruments();
+    void playPressed();
     void confirmDiscard (std::function<void()> then);
     void changeLanguage (i18n::Lang l);
     bool skipDiscard = false;
