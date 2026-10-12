@@ -75,8 +75,10 @@ struct SnapPattern
     int id = 0;
     int length = 16;
     std::vector<uint8_t> vel;
+    std::vector<uint8_t> len;       // duracao em passos (0/1 = um passo)
     std::vector<SnapNote> notes;    // ordenadas pelo inicio
     uint8_t get (int pad, int step) const { return vel[(size_t) pad * kMaxSteps + (size_t) step]; }
+    int getLen (int pad, int step) const { return len.empty() ? 1 : juce::jmax (1, (int) len[(size_t) pad * kMaxSteps + (size_t) step]); }
 };
 
 struct Snapshot

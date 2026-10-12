@@ -97,6 +97,7 @@ SnapshotPtr SnapshotBuilder::build (const Project& p, SourcePool& sources, Stret
         sp.id = p.patterns[i].id;
         sp.length = juce::jlimit (1, kMaxSteps, p.patterns[i].lengthSteps);
         sp.vel = p.patterns[i].vel;
+        sp.len = p.patterns[i].len;
         const double patLen = sp.length / (double) kStepsPerBeat;
         for (auto& n : p.patterns[i].notes)
         {

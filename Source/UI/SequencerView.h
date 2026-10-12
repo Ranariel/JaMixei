@@ -24,7 +24,10 @@ private:
     juce::TextButton newBtn { TR ("+ Novo") }, dupBtn { TR ("Duplicar") }, renBtn { TR ("Renomear") }, delBtn { TR ("Apagar") },
                      insertBtn { TR ("Inserir no arranjo") }, clearBtn { TR ("Limpar") }, playPatBtn { TR ("Loop do padrão") };
     Knob swing { TR ("Swing"), 50.0, 75.0, 50.0, 0.5 };
+    juce::Viewport viewport;
+    juce::TextButton allBanksBtn { TR ("Todos os bancos") };
 public:
+    bool showAllBanks = false;
     int clickVelocity = 100;
 };
 

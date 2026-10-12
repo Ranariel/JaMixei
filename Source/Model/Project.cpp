@@ -220,6 +220,12 @@ juce::var Project::toVar() const
             for (int s = 0; s < kMaxSteps; ++s)
                 if (auto v = p.get (pad, s)) { notes.add (pad); notes.add (s); notes.add ((int) v); }
         o->setProperty ("notes", notes);
+        // duracao dos passos esticados: [pad, step, len, ...]
+        juce::Array<juce::var> lens;
+        for (int pad = 0; pad < kNumPads; ++pad)
+            for (int s = 0; s < kMaxSteps; ++s)
+                if (p.get (pad, s) && p.getLen (pad, s) > 1) { lens.add (pad); lens.add (s); lens.add (p.getLen (pad, s)); }
+        if (! lens.isEmpty()) o->setProperty ("lens", lens);
         // piano roll: [canal, nota, inicio, duracao, vel, ...]
         juce::Array<juce::var> keys;
         for (auto& n : p.notes)
@@ -351,6 +357,12 @@ void Project::fromVar (const juce::var& r)
                 {
                     int pad = (*n)[i], st = (*n)[i + 1], v = (*n)[i + 2];
                     if (pad >= 0 && pad < kNumPads && st >= 0 && st < kMaxSteps) p.set (pad, st, (uint8_t) juce::jlimit (0, 127, v));
+                }
+            if (auto* l = o.getProperty ("lens", {}).getArray())
+                for (int i = 0; i + 2 < l->size(); i += 3)
+                {
+                    int pad = (*l)[i], st = (*l)[i + 1], ln = (*l)[i + 2];
+                    if (pad >= 0 && pad < kNumPads && st >= 0 && st < kMaxSteps) p.setLen (pad, st, ln);
                 }
             if (auto* k = o.getProperty ("keys", {}).getArray())
                 for (int i = 0; i + 4 < k->size(); i += 5)

@@ -429,27 +429,30 @@ void Session::loadInstrument (int instrument, int rootMidi, int scale, int bank,
 {
     using namespace instruments;
     const auto id = (Id) juce::jlimit (0, (int) Id::count - 1, instrument);
+    const bool allBanks = bank < 0;     // -1 = os 4 bancos: 64 notas seguidas (varias oitavas sem trocar de banco)
     bank = juce::jlimit (0, kNumBanks - 1, bank);
-    const auto notes = scaleNotes (rootMidi, (Scale) juce::jlimit (0, (int) Scale::count - 1, scale), kPadsPerBank);
+    const auto notes = scaleNotes (rootMidi, (Scale) juce::jlimit (0, (int) Scale::count - 1, scale), allBanks ? kNumPads : kPadsPerBank);
     const auto name = displayName (id);
     setStatus (TR ("Gerando o instrumento ") + name + "...");
     auto folder = dataFolder().getChildFile ("Instrumentos");
     auto alive = aliveFlag;
-    juce::Thread::launch ([this, alive, id, notes, folder, name, bank, done]
+    juce::Thread::launch ([this, alive, id, notes, folder, name, bank, allBanks, done]
     {
         Rendered r;
         const bool ok = instruments::renderToFile (id, notes, folder, r);
-        juce::MessageManager::callAsync ([this, alive, ok, r, id, name, bank, done]
+        juce::MessageManager::callAsync ([this, alive, ok, r, id, name, bank, allBanks, done]
         {
             if (! *alive) return;
             if (! ok) { setStatus (TR ("Não foi possível gerar o instrumento")); if (done) done (false); return; }
-            importFile (r.file, [this, r, id, name, bank, done] (int sourceId)
+            importFile (r.file, [this, r, id, name, bank, allBanks, done] (int sourceId)
             {
                 const auto& in = info (id);
                 beginEdit (TR ("Carregar instrumento"));
-                for (int i = 0; i < kPadsPerBank && i < (int) r.regions.size(); ++i)
+                const int first = allBanks ? 0 : bank * kPadsPerBank;
+                const int count = allBanks ? kNumPads : kPadsPerBank;
+                for (int i = 0; i < count && i < (int) r.regions.size(); ++i)
                 {
-                    auto& p = project.pads[(size_t) (bank * kPadsPerBank + i)];
+                    auto& p = project.pads[(size_t) (first + i)];
                     p = Pad();
                     p.sourceId = sourceId;
                     p.startSec = r.regions[(size_t) i].first;
@@ -462,10 +465,10 @@ void Session::loadInstrument (int instrument, int rootMidi, int scale, int bank,
                     p.colour = juce::Colour (in.colour);
                 }
                 if (auto* si = project.findSource (sourceId)) { si->name = name; si->bpm = project.bpm; si->bpmDetected = false; }
-                currentBank = bank;
-                selectedPad = bank * kPadsPerBank;
+                currentBank = allBanks ? 0 : bank;
+                selectedPad = first;
                 commit (kChPads | kChSources);
-                setStatus (name + TR (" carregado no banco ") + juce::String::charToString ((juce::juce_wchar) ('A' + bank))
+                setStatus (name + (allBanks ? TR (" carregado nos 4 bancos (64 notas). No Sequenciador, ligue \"Todos os bancos\" para ver todas") : TR (" carregado no banco ") + juce::String::charToString ((juce::juce_wchar) ('A' + bank)))
                            + TR ("  |  toque nos pads ou no teclado (Z X C V / A S D F / Q W E R / 1 2 3 4)"));
                 if (done) done (true);
             });
@@ -663,7 +666,11 @@ void Session::setPatternLength (int steps)
     const double oldBeats = p->lengthBeats();
     if (steps > old)
         for (int pad = 0; pad < kNumPads; ++pad)
-            for (int st = old; st < steps; ++st) p->set (pad, st, p->get (pad, st % old));
+            for (int st = old; st < steps; ++st)
+            {
+                p->set (pad, st, p->get (pad, st % old));
+                p->setLen (pad, st, p->get (pad, st) ? p->getLen (pad, st % old) : 0);
+            }
     p->lengthSteps = steps;
     // clipes que mostravam o padrao inteiro acompanham o novo tamanho
     for (auto& c : project.clips)

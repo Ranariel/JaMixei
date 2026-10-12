@@ -1107,8 +1107,9 @@ void MainComponent::showInstruments()
     aw->addComboBox ("scale", scales, TR ("Escala"));
     juce::StringArray banks;
     for (int b = 0; b < kNumBanks; ++b) banks.add (TR ("Banco ") + juce::String::charToString ((juce::juce_wchar) ('A' + b)));
+    banks.add (TR ("Os 4 bancos: 64 notas, mais de 5 oitavas (sem trocar de oitava)"));
     aw->addComboBox ("bank", banks, TR ("Colocar no"));
-    aw->addTextBlock (TR ("Os 16 pads do banco escolhido serão substituídos (Ctrl+Z desfaz).\nPads 1 a 16 = notas em ordem, do grave para o agudo."));
+    aw->addTextBlock (TR ("Os pads escolhidos serão substituídos (Ctrl+Z desfaz).\nMelodias longas e com todas as oitavas: aba INSTRUMENTOS."));
     aw->getComboBoxComponent ("inst")->setSelectedItemIndex (juce::jlimit (0, names.size() - 1, settings->getIntValue ("instLast", 0)));
     aw->getComboBoxComponent ("key")->setSelectedItemIndex (juce::jlimit (0, 11, settings->getIntValue ("instKey", 0)));
     aw->getComboBoxComponent ("oct")->setSelectedItemIndex (juce::jlimit (0, 5, settings->getIntValue ("instOct", 0)));
@@ -1128,9 +1129,11 @@ void MainComponent::showInstruments()
         settings->setValue ("instKey", key);
         settings->setValue ("instOct", oct);
         settings->setValue ("instScale", scale);
-        const int octave = oct == 0 ? instruments::info ((instruments::Id) inst).defaultOctave : oct;
+        const bool all = bank >= kNumBanks;
+        int octave = oct == 0 ? instruments::info ((instruments::Id) inst).defaultOctave : oct;
+        if (all && oct == 0) octave = juce::jmax (1, octave - 1);   // 64 notas: comeca uma oitava abaixo
         const int root = (octave + 1) * 12 + key;      // C4 = 60 (do central)
-        session.loadInstrument (inst, root, scale, bank);
+        session.loadInstrument (inst, root, scale, all ? -1 : bank);
     }), true);
 }
 

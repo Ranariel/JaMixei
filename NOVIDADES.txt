@@ -1,5 +1,5 @@
-- Nova aba INSTRUMENTOS: piano roll estilo FL Studio + piano completo de 88 teclas
-- Vários instrumentos ao mesmo tempo (piano, synths, baixo 808, cordas...), com volume, pan, ataque, release e transpor
-- Toque pelo teclado do PC (Z S X D C... / Q 2 W 3 E...) ou por teclado MIDI (com pedal de sustain) e grave as notas
-- Teclado/controlador MIDI também toca os pads nas outras abas
-- Correções: swing também nas notas, tamanho do padrão estica os clipes do arranjo, exportar o beat do modo PADRÃO
+- Filtro dos pads corrigido: agora atua na hora, enquanto o som toca (Filtro, Resson., Volume, Pan e Tom em tempo real)
+- Sequenciador: arraste uma nota para a direita para ESTICAR (nota longa); clique simples continua ligando/desligando
+- Sequenciador: botão "Todos os bancos" mostra os 64 pads de uma vez (instrumentos com várias oitavas sem trocar)
+- Instrumentos nos pads: opção "Os 4 bancos" (64 notas, mais de 5 oitavas)
+- Para melodias livres em todas as oitavas: aba INSTRUMENTOS (piano roll + piano de 88 teclas)

@@ -300,6 +300,81 @@ int main()
         CHECK (out.getMagnitude (0, 0, out.getNumSamples()) > 0.05f, "modo padrao produz som");
         CHECK (r.posBeats >= 0 && r.posBeats < 4.0, "posicao do padrao em loop");
 
+        // passo esticado (nota longa no sequenciador) + filtro do pad em tempo real
+        {
+            Pattern pt;
+            pt.set (5, 0, 100); pt.setLen (5, 0, 4);
+            pt.set (5, 6, 90);
+            CHECK (pt.headAt (5, 2) == 0 && pt.headAt (5, 4) == -1 && pt.headAt (5, 6) == 6 && pt.getLen (5, 0) == 4, "passo esticado cobre os passos seguintes");
+            pt.set (5, 0, 0);
+            CHECK (pt.getLen (5, 0) == 1 && pt.headAt (5, 2) == -1, "apagar o passo zera a duracao");
+
+            auto& pj = session.project;
+            auto* cur = session.currentPattern();
+            for (int pad = 0; pad < kNumPads; ++pad) for (int st2 = 0; st2 < kMaxSteps; ++st2) cur->set (pad, st2, 0);
+            cur->lengthSteps = 16;
+            const auto savedPad = pj.pads[0];
+            pj.pads[0].startSec = 0.0; pj.pads[0].endSec = 6.0;   // amostra longa (6 s)
+            pj.pads[0].mode = PadMode::Gate;
+            pj.pads[0].releaseMs = 5;
+            cur->set (0, 0, 120); cur->setLen (0, 0, 8);   // meio compasso
+            auto j2 = pj.toJson();
+            Project pr; pr.fromJson (j2);
+            CHECK (pr.findPattern (cur->id)->getLen (0, 0) == 8, "duracao dos passos salva no projeto");
+            auto snap2 = session.buildSnapshot (44100);
+            Renderer rg; rg.prepare (44100, 512);
+            rg.patternMode = true; rg.playing = true; rg.posBeats = 0;
+            juce::AudioBuffer<float> gb (2, 44100);   // 2 tempos a 120 BPM = 1 s
+            rg.process (*snap2, gb, 0, gb.getNumSamples());
+            const float during = gb.getRMSLevel (0, (int) (44100 * 0.8), 2000);   // 1,6 tempo: ainda dentro da nota (2 tempos)
+            CHECK (during > 0.005f, "nota esticada segura o pad (modo Gate) " + std::to_string (during));
+            cur->setLen (0, 0, 1);
+            auto snap3 = session.buildSnapshot (44100);
+            Renderer rg2; rg2.prepare (44100, 512);
+            rg2.patternMode = true; rg2.playing = true; rg2.posBeats = 0;
+            rg2.process (*snap3, gb, 0, gb.getNumSamples());
+            CHECK (gb.getRMSLevel (0, (int) (44100 * 0.8), 2000) < during * 0.2f, "sem esticar, o pad solta no fim do passo");
+
+            // em One-shot (piano nos pads): nota esticada solta no fim; nota de 1 passo toca ate o fim da amostra
+            pj.pads[0].mode = PadMode::OneShot;
+            pj.pads[0].releaseMs = 5;
+            cur->setLen (0, 0, 4);   // 1 tempo
+            auto snapO = session.buildSnapshot (44100);
+            Renderer ro; ro.prepare (44100, 512);
+            ro.patternMode = true; ro.playing = true; ro.posBeats = 0;
+            juce::AudioBuffer<float> ob2 (2, 44100);
+            ro.process (*snapO, ob2, 0, ob2.getNumSamples());
+            CHECK (ob2.getRMSLevel (0, (int) (44100 * 0.75), 2000) < 0.002f, "One-shot esticado solta no fim da duracao");
+            cur->setLen (0, 0, 1);
+            auto snapO2 = session.buildSnapshot (44100);
+            Renderer ro2; ro2.prepare (44100, 512);
+            ro2.patternMode = true; ro2.playing = true; ro2.posBeats = 0;
+            ro2.process (*snapO2, ob2, 0, ob2.getNumSamples());
+            CHECK (ob2.getRMSLevel (0, (int) (44100 * 0.75), 2000) > 0.005f, "One-shot de 1 passo toca a amostra inteira (como antes)");
+
+            // filtro: girar o botao enquanto o som toca muda o som na hora
+            pj.pads[0].mode = PadMode::OneShot;
+            pj.pads[0].cutoff = 20000;
+            auto snapA = session.buildSnapshot (44100);
+            Renderer rf, rref; rf.prepare (44100, 512); rref.prepare (44100, 512);
+            rf.padOn (*snapA, 0, 120, 0, 0, -1, false);
+            rref.padOn (*snapA, 0, 120, 0, 0, -1, false);
+            juce::AudioBuffer<float> fb (2, 4096), fr (2, 4096);
+            rf.process (*snapA, fb, 0, 4096);
+            rref.process (*snapA, fr, 0, 4096);
+            pj.pads[0].cutoff = 150;   // botao girado com a nota tocando
+            auto snapB = session.buildSnapshot (44100);
+            juce::AudioBuffer<float> fb2 (2, 16384), fr2 (2, 16384);
+            rf.process (*snapB, fb2, 0, 16384);
+            rref.process (*snapA, fr2, 0, 16384);
+            // energia de agudos (segunda diferenca) no mesmo trecho: com filtro x sem filtro
+            auto hf = [] (const juce::AudioBuffer<float>& b, int s0, int n)
+            { double a = 0; for (int i = s0 + 2; i < s0 + n; ++i) a += std::abs (b.getSample (0, i) - 2 * b.getSample (0, i - 1) + b.getSample (0, i - 2)); return a / n; };
+            const double ref = hf (fr2, 4096, 12288), filt = hf (fb2, 4096, 12288);
+            CHECK (ref > 0 && filt < ref * 0.2, "filtro do pad atua em tempo real (agudos " + std::to_string (filt / juce::jmax (1e-12, ref)) + "x)");
+            pj.pads[0] = savedPad;
+        }
+
         // pads ao vivo com gravacao
         r.recording = true;
         r.padOn (*snap, 3, 100, 0, 0, -1, true);

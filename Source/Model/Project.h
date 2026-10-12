@@ -134,10 +134,25 @@ struct Pattern
     int lengthSteps = 16;
     std::vector<uint8_t> vel;  // kNumPads * kMaxSteps, indice [pad * kMaxSteps + step]
     std::vector<Note> notes;   // notas dos instrumentos (piano roll)
+    std::vector<uint8_t> len;  // duracao de cada passo em passos (0/1 = um passo); "esticar a nota" no sequenciador
 
-    Pattern() { vel.assign ((size_t) kNumPads * kMaxSteps, 0); }
+    Pattern() { vel.assign ((size_t) kNumPads * kMaxSteps, 0); len.assign ((size_t) kNumPads * kMaxSteps, 0); }
     uint8_t get (int pad, int step) const { return vel[(size_t) pad * kMaxSteps + (size_t) step]; }
-    void set (int pad, int step, uint8_t v) { vel[(size_t) pad * kMaxSteps + (size_t) step] = v; }
+    void set (int pad, int step, uint8_t v)
+    {
+        vel[(size_t) pad * kMaxSteps + (size_t) step] = v;
+        if (v == 0) len[(size_t) pad * kMaxSteps + (size_t) step] = 0;
+    }
+    int getLen (int pad, int step) const { return juce::jmax (1, (int) len[(size_t) pad * kMaxSteps + (size_t) step]); }
+    void setLen (int pad, int step, int l) { len[(size_t) pad * kMaxSteps + (size_t) step] = (uint8_t) juce::jlimit (0, kMaxSteps, l <= 1 ? 0 : l); }
+    // passo que comeca a nota que cobre (pad, step): o proprio passo ou uma nota esticada antes dele; -1 se vazio
+    int headAt (int pad, int step) const
+    {
+        if (get (pad, step)) return step;
+        for (int k = step - 1; k >= 0; --k)
+            if (get (pad, k)) return (k + getLen (pad, k) > step) ? k : -1;
+        return -1;
+    }
     double lengthBeats() const { return lengthSteps / (double) kStepsPerBeat; }
 };
 

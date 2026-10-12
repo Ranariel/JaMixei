@@ -95,6 +95,14 @@ instaladas) são lidos pelo decodificador do próprio Windows. Se algum arquivo 
 | Shift ao arrastar | Mover sem a grade |
 | Esc | Parar todas as prévias e sons |
 
+## Sequenciador: notas longas e todas as oitavas
+
+- **Esticar nota**: clique e arraste uma nota já ligada para a direita. Em pads One-shot (ex.: piano), a nota solta no fim
+  da duração (como soltar a tecla); em Gate/Loop ela segura até o fim.
+- **Todos os bancos**: mostra os 64 pads de uma vez (rolando). Junto com *Instrumentos > Os 4 bancos* você tem 64 notas
+  seguidas, sem trocar de oitava.
+- **Filtro / Resson. / Volume / Pan / Tom** do pad agora mudam o som na hora, mesmo com a nota tocando.
+
 ## Aba INSTRUMENTOS (piano roll, estilo FL Studio)
 
 - **Ctrl+4** ou a aba *Instrumentos*: lista de instrumentos à esquerda, piano roll no meio e um piano completo de 88 teclas embaixo.

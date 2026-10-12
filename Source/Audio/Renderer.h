@@ -91,7 +91,7 @@ public:
     bool recording = false;
     bool repeatSong = false;   // modo MUSICA sem loop: no fim volta ao comeco (o motor ao vivo liga; exportacao nao)
 
-    void padOn (const Snapshot& snap, int pad, uint8_t vel, int slot, int offset, int gateSamples, bool fromLive);
+    void padOn (const Snapshot& snap, int pad, uint8_t vel, int slot, int offset, int gateSamples, bool fromLive, bool forceGate = false);
     void padOff (int pad);
     void allNotesOff (bool hard);
 
@@ -136,6 +136,7 @@ private:
         int stage = 0; // 0 ataque, 1 sustentacao, 2 release
         float env = 0, attackInc = 1, releaseCoef = 0.99f;
         bool useFilter = false;
+        float velGain = 1, cutoffCur = 20000;    // filtro/volume acompanham os botoes em tempo real
         float fg = 0, fk = 0, fa1 = 0, fa2 = 0, fa3 = 0;
         float ic1[2] { 0, 0 }, ic2[2] { 0, 0 };
         juce::uint64 age = 0;
@@ -165,7 +166,7 @@ private:
     void triggerPatternSteps (const Snapshot& snap, const SnapPattern& pat, int slot, double origin,
                               double clipStart, double clipEnd, int off, int len, double b0);
     void renderAudioClip (const Snapshot& snap, const SnapClip& c, int off, int len, double b0);
-    void renderVoices (int n);
+    void renderVoices (const Snapshot& snap, int n);
     void processTrack (const Snapshot& snap, int slot, int n, float* masterL, float* masterR);
     void processMaster (const Snapshot& snap, float* L, float* R, int n);
     static float evalAuto (const std::vector<AutoPoint>& pts, double beat, float def);

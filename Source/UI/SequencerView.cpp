@@ -11,14 +11,15 @@ public:
     static constexpr int headerW = 150;
 
     Pattern* pat() { return owner.session.currentPattern(); }
-    int rowH() const { return juce::jmax (14, getHeight() / kPadsPerBank); }
+    int numRows() const { return owner.showAllBanks ? kNumPads : kPadsPerBank; }
+    int rowH() const { return owner.showAllBanks ? 26 : juce::jmax (14, getHeight() / kPadsPerBank); }
     float colW() const
     {
         auto* p = const_cast<Grid*> (this)->pat();
         const int steps = p ? p->lengthSteps : 16;
         return (getWidth() - headerW) / (float) steps;
     }
-    int padForRow (int row) const { return owner.session.currentBank * kPadsPerBank + row; }
+    int padForRow (int row) const { return owner.showAllBanks ? row : owner.session.currentBank * kPadsPerBank + row; }
 
     int playingStep = -1;
 
@@ -30,56 +31,83 @@ public:
         auto& proj = owner.session.project;
         const int rh = rowH();
         const float cw = colW();
-        for (int row = 0; row < kPadsPerBank; ++row)
+        auto clip = g.getClipBounds();
+        for (int row = 0; row < numRows(); ++row)
         {
-            const int pad = padForRow (row);
-            const auto& pd = proj.pads[(size_t) pad];
             const int y = row * rh;
+            if (y + rh < clip.getY() || y > clip.getBottom()) continue;
+            const int pad = padForRow (row);
+            const int bank = pad / kPadsPerBank, idx = pad % kPadsPerBank;
+            const auto& pd = proj.pads[(size_t) pad];
             const bool sel = owner.session.selectedPad == pad;
             // cabecalho da linha
             g.setColour (sel ? Theme::panel3 : Theme::panel2);
             g.fillRect (0, y, headerW - 2, rh - 1);
             g.setColour (pd.isEmpty() ? Theme::panel3 : pd.colour);
             g.fillRect (0, y, 4, rh - 1);
-            g.setFont (Theme::mono (11.0f, true));
-            g.setColour (Theme::textDim);
-            g.drawText (juce::String::charToString ((juce::juce_wchar) padKeyCode (row)), 8, y, 14, rh - 1, juce::Justification::centred);
+            if (bank == owner.session.currentBank)
+            {
+                g.setFont (Theme::mono (11.0f, true));
+                g.setColour (Theme::textDim);
+                g.drawText (juce::String::charToString ((juce::juce_wchar) padKeyCode (idx)), 8, y, 14, rh - 1, juce::Justification::centred);
+            }
             g.setFont (Theme::font (12.0f, ! pd.isEmpty()));
             g.setColour (pd.isEmpty() ? Theme::textFaint : Theme::text);
-            g.drawFittedText (juce::String::charToString ((juce::juce_wchar) ('A' + owner.session.currentBank)) + juce::String (row + 1) + "  " + pd.name,
+            g.drawFittedText (juce::String::charToString ((juce::juce_wchar) ('A' + bank)) + juce::String (idx + 1) + "  " + pd.name,
                               26, y, headerW - 30, rh - 1, juce::Justification::centredLeft, 1, 1.0f);
-            // celulas
-            for (int s = 0; s < p->lengthSteps; ++s)
+            if (owner.showAllBanks && idx == 0 && row > 0)
             {
-                auto cell = juce::Rectangle<float> (headerW + s * cw, (float) y, cw, (float) rh).reduced (1.5f, 1.5f);
-                const bool beatStart = (s / kStepsPerBeat) % 2 == 0;
+                g.setColour (Theme::gridStrong.brighter (0.4f));
+                g.fillRect (0, y, getWidth(), 2);
+            }
+            // celulas vazias
+            for (int st = 0; st < p->lengthSteps; ++st)
+            {
+                auto cell = juce::Rectangle<float> (headerW + st * cw, (float) y, cw, (float) rh).reduced (1.5f, 1.5f);
+                const bool beatStart = (st / kStepsPerBeat) % 2 == 0;
                 g.setColour (beatStart ? Theme::panel2 : Theme::panel);
-                if (s == playingStep) g.setColour (Theme::panel3.brighter (0.15f));
+                if (st == playingStep) g.setColour (Theme::panel3.brighter (0.15f));
                 g.fillRoundedRectangle (cell, 2.5f);
-                if (const auto v = p->get (pad, s))
+            }
+        }
+        // linhas de compasso
+        for (int st = 0; st <= p->lengthSteps; st += kStepsPerBeat)
+        {
+            const bool bar = st % (kStepsPerBeat * proj.beatsPerBar) == 0;
+            g.setColour (bar ? Theme::gridStrong.brighter (0.2f) : Theme::gridStrong);
+            g.fillRect (headerW + st * cw - 0.5f, 0.0f, bar ? 2.0f : 1.0f, (float) rh * numRows());
+        }
+        // notas por cima das linhas (uma barra so quando esticada)
+        for (int row = 0; row < numRows(); ++row)
+        {
+            const int y = row * rh;
+            if (y + rh < clip.getY() || y > clip.getBottom()) continue;
+            const int pad = padForRow (row);
+            const auto& pd = proj.pads[(size_t) pad];
+            for (int st = 0; st < p->lengthSteps; ++st)
+                if (const auto v = p->get (pad, st))
                 {
+                    const int len = juce::jmin (p->getLen (pad, st), p->lengthSteps - st);
+                    auto cell = juce::Rectangle<float> (headerW + st * cw, (float) y, cw * len, (float) rh).reduced (1.5f, 1.5f);
                     auto col = pd.isEmpty() ? Theme::accent : pd.colour;
                     const float a = 0.35f + 0.65f * v / 127.0f;
                     g.setColour (col.withAlpha (a));
                     g.fillRoundedRectangle (cell, 2.5f);
+                    if (len > 1)
+                    {
+                        // alca de esticar no fim
+                        g.setColour (juce::Colours::black.withAlpha (0.35f));
+                        g.fillRect (cell.getRight() - 4.0f, cell.getY() + 3.0f, 2.0f, cell.getHeight() - 6.0f);
+                    }
                     // barra de velocidade
                     g.setColour (juce::Colours::white.withAlpha (0.55f));
-                    g.fillRect (cell.getX() + 2, cell.getBottom() - 3, (cell.getWidth() - 4) * v / 127.0f, 2.0f);
+                    g.fillRect (cell.getX() + 2, cell.getBottom() - 3, (juce::jmin (cw, cell.getWidth()) - 4) * v / 127.0f, 2.0f);
                 }
-            }
         }
-        // linhas de compasso
-        for (int s = 0; s <= p->lengthSteps; s += kStepsPerBeat)
-        {
-            const bool bar = s % (kStepsPerBeat * proj.beatsPerBar) == 0;
-            g.setColour (bar ? Theme::gridStrong.brighter (0.2f) : Theme::gridStrong);
-            g.fillRect (headerW + s * cw - 0.5f, 0.0f, bar ? 2.0f : 1.0f, (float) rh * kPadsPerBank);
-        }
-        // numeros dos tempos
-        if (playingStep >= 0)
+        if (playingStep >= 0 && ! owner.showAllBanks)
         {
             g.setColour (Theme::accent.withAlpha (0.8f));
-            g.fillRect (headerW + playingStep * cw, (float) rh * kPadsPerBank, cw, 3.0f);
+            g.fillRect (headerW + playingStep * cw, (float) rh * numRows(), cw, 3.0f);
         }
     }
 
@@ -89,7 +117,7 @@ public:
         if (p == nullptr || pt.x < headerW) return false;
         row = (int) (pt.y / rowH());
         step = (int) ((pt.x - headerW) / colW());
-        return row >= 0 && row < kPadsPerBank && step >= 0 && step < p->lengthSteps;
+        return row >= 0 && row < numRows() && step >= 0 && step < p->lengthSteps;
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -97,29 +125,47 @@ public:
         auto* p = pat();
         if (p == nullptr) return;
         const int row = (int) (e.position.y / rowH());
+        stretchHead = -1;
+        moved = false;
         if (e.position.x < headerW)
         {
-            if (row >= 0 && row < kPadsPerBank)
+            if (row >= 0 && row < numRows())
             {
                 owner.session.padDown (padForRow (row), 120);
                 auditionPad = padForRow (row);
             }
             return;
         }
-        int r, s;
-        if (! cellAt (e.position, r, s)) return;
+        int r, st;
+        if (! cellAt (e.position, r, st)) return;
         owner.session.beginEdit (TR ("Editar padrão"));
         const int pad = padForRow (r);
-        const uint8_t cur = p->get (pad, s);
+        const int head = p->headAt (pad, st);
+        const uint8_t cur = head >= 0 ? p->get (pad, head) : 0;
         uint8_t vel = (uint8_t) owner.clickVelocity;
         if (e.mods.isShiftDown()) vel = 127;
         else if (e.mods.isAltDown()) vel = 50;
-        if (e.mods.isPopupMenu()) paintValue = 0;
-        else paintValue = cur ? 0 : vel;
-        if (e.mods.isCommandDown() && cur) { velDragPad = pad; velDragStep = s; velStart = cur; velY = e.position.y; paintValue = -1; return; }
+        if (e.mods.isCommandDown() && cur) { velDragPad = pad; velDragStep = head; velStart = cur; velY = e.position.y; paintValue = -1; return; }
         velDragPad = -1;
-        p->set (pad, s, (uint8_t) paintValue);
-        if (paintValue > 0 && ! owner.session.engine.isPlaying()) { owner.session.engine.padDown (pad, (uint8_t) paintValue); owner.session.engine.padUp (pad); }
+        if (e.mods.isPopupMenu())
+        {
+            paintValue = 0;
+            if (head >= 0) p->set (pad, head, 0);
+            owner.session.commit (kChPatterns);
+            return;
+        }
+        if (head >= 0)
+        {
+            // nota existente: arrastar para a direita estica; clique simples desliga
+            stretchPad = pad;
+            stretchHead = head;
+            clickStep = st;
+            paintValue = -1;
+            return;
+        }
+        paintValue = vel;
+        p->set (pad, st, (uint8_t) paintValue);
+        if (! owner.session.engine.isPlaying()) { owner.session.engine.padDown (pad, (uint8_t) paintValue); owner.session.engine.padUp (pad); }
         owner.session.commit (kChPatterns);
     }
     void mouseDrag (const juce::MouseEvent& e) override
@@ -134,27 +180,58 @@ public:
             owner.session.commit (kChPatterns);
             return;
         }
-        if (paintValue < 0) return;
-        int r, s;
-        if (! cellAt (e.position, r, s)) return;
-        const int pad = padForRow (r);
-        if (p->get (pad, s) != (uint8_t) paintValue)
+        if (stretchHead >= 0)
         {
-            p->set (pad, s, (uint8_t) paintValue);
+            const int st = juce::jlimit (stretchHead, p->lengthSteps - 1, (int) ((e.position.x - headerW) / colW()));
+            if (st != clickStep) moved = true;
+            if (! moved) return;
+            const int len = st - stretchHead + 1;
+            if (len != p->getLen (stretchPad, stretchHead))
+            {
+                // a nota esticada "engole" os passos que ficarem embaixo dela
+                for (int k = stretchHead + 1; k <= st; ++k) p->set (stretchPad, k, 0);
+                p->setLen (stretchPad, stretchHead, len);
+                owner.session.setStatus (TR ("Duração: ") + juce::String (len) + TR (" passo(s)"));
+                owner.session.commit (kChPatterns);
+            }
+            return;
+        }
+        if (paintValue < 0) return;
+        int r, st;
+        if (! cellAt (e.position, r, st)) return;
+        const int pad = padForRow (r);
+        if (paintValue == 0)
+        {
+            const int head = p->headAt (pad, st);
+            if (head >= 0) { p->set (pad, head, 0); owner.session.commit (kChPatterns); }
+            return;
+        }
+        if (p->headAt (pad, st) < 0)
+        {
+            p->set (pad, st, (uint8_t) paintValue);
             owner.session.commit (kChPatterns);
         }
     }
     void mouseUp (const juce::MouseEvent&) override
     {
+        auto* p = pat();
+        if (p != nullptr && stretchHead >= 0 && ! moved && clickStep == stretchHead)
+        {
+            p->set (stretchPad, stretchHead, 0);   // clique simples numa nota: desliga (como antes)
+            owner.session.commit (kChPatterns);
+        }
         if (auditionPad >= 0) owner.session.padUp (auditionPad);
         auditionPad = -1;
         velDragPad = -1;
+        stretchHead = -1;
     }
 
     SequencerView& owner;
     int paintValue = 0;
     int auditionPad = -1;
     int velDragPad = -1, velDragStep = 0, velStart = 0;
+    int stretchPad = -1, stretchHead = -1, clickStep = -1;
+    bool moved = false;
     float velY = 0;
 };
 
@@ -162,7 +239,22 @@ public:
 SequencerView::SequencerView (Session& s) : session (s)
 {
     grid = std::make_unique<Grid> (*this);
-    addAndMakeVisible (*grid);
+    viewport.setViewedComponent (grid.get(), false);
+    viewport.setScrollBarsShown (true, false);
+    addAndMakeVisible (viewport);
+    showAllBanks = session.props.getUserSettings()->getBoolValue ("seqAllBanks", false);
+    styleToggle (allBanksBtn, Theme::accent2);
+    allBanksBtn.setClickingTogglesState (true);
+    allBanksBtn.setToggleState (showAllBanks, juce::dontSendNotification);
+    allBanksBtn.setTooltip (TR ("Mostra os 64 pads (4 bancos) de uma vez, rolando: ótimo para instrumentos com várias oitavas"));
+    allBanksBtn.onClick = [this]
+    {
+        showAllBanks = allBanksBtn.getToggleState();
+        session.props.getUserSettings()->setValue ("seqAllBanks", showAllBanks);
+        resized();
+        grid->repaint();
+    };
+    addAndMakeVisible (allBanksBtn);
     for (auto* c : std::initializer_list<juce::Component*> { &patternBox, &lengthBox, &velBox, &newBtn, &dupBtn, &renBtn, &delBtn, &insertBtn, &clearBtn, &playPatBtn, &swing })
         addAndMakeVisible (c);
 
@@ -318,8 +410,12 @@ void SequencerView::resized()
     lengthBox.setBounds (row2.removeFromLeft (190)); row2.removeFromLeft (6);
     velBox.setBounds (row2.removeFromLeft (180)); row2.removeFromLeft (6);
     clearBtn.setBounds (row2.removeFromLeft (110));
+    row2.removeFromLeft (6);
+    allBanksBtn.setBounds (row2.removeFromLeft (150));
     r.removeFromTop (20);
-    grid->setBounds (r);
+    viewport.setBounds (r);
+    const int gw = r.getWidth() - (showAllBanks ? viewport.getScrollBarThickness() : 0);
+    grid->setSize (gw, showAllBanks ? 26 * kNumPads : r.getHeight());
 }
 
 void SequencerView::paint (juce::Graphics& g)
@@ -327,7 +423,7 @@ void SequencerView::paint (juce::Graphics& g)
     g.fillAll (Theme::panel);
     g.setColour (Theme::textFaint);
     g.setFont (Theme::font (11.0f));
-    g.drawText (TR ("Clique para ligar/desligar passos  |  arraste para pintar  |  botão direito apaga  |  Shift = forte, Alt = fraco, Ctrl+arrastar = velocidade  |  Ctrl+R grava tocando os pads"),
+    g.drawText (TR ("Clique liga/desliga  |  arraste numa nota para ESTICAR  |  arraste no vazio para pintar  |  botão direito apaga  |  Shift = forte, Alt = fraco, Ctrl+arrastar = velocidade"),
                 grid->getBounds().withHeight (14).translated (0, -18), juce::Justification::centredLeft);
 }
 

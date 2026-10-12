@@ -76,7 +76,7 @@ void Renderer::Voice::startRelease (float ms, double sampleRate)
     releaseCoef = (float) std::exp (std::log (0.0001) / samples);
 }
 
-void Renderer::padOn (const Snapshot& snap, int pad, uint8_t vel, int slot, int offset, int gateSamples, bool fromLive)
+void Renderer::padOn (const Snapshot& snap, int pad, uint8_t vel, int slot, int offset, int gateSamples, bool fromLive, bool forceGate)
 {
     if (pad < 0 || pad >= kNumPads || vel == 0) return;
     const auto& sp = snap.pads[(size_t) pad];
@@ -114,17 +114,20 @@ void Renderer::padOn (const Snapshot& snap, int pad, uint8_t vel, int slot, int 
     v.pos = 0;
     v.inc = sp.bufSR / sr * sp.pitchRatio;
     v.mode = sp.mode;
-    const float g = sp.gain * velToGain (vel);
+    v.velGain = velToGain (vel);
+    const float g = sp.gain * v.velGain;
     v.gL = g * (sp.pan > 0 ? 1.0f - sp.pan : 1.0f);
     v.gR = g * (sp.pan < 0 ? 1.0f + sp.pan : 1.0f);
     v.delay = juce::jmax (0, offset);
-    v.gateRemaining = (sp.mode != PadMode::OneShot && gateSamples > 0) ? gateSamples : -1;
+    // nota esticada no sequenciador solta no fim mesmo em One-shot (como soltar a tecla do piano)
+    v.gateRemaining = ((sp.mode != PadMode::OneShot || forceGate) && gateSamples > 0) ? gateSamples : -1;
     const double atk = juce::jmax (1.0, sp.attackMs * sr / 1000.0);
     v.attackInc = (float) (1.0 / atk);
     v.stage = 0;
     v.env = sp.attackMs <= 0.05f ? 1.0f : 0.0f;
     if (v.env >= 1.0f) v.stage = 1;
     v.releaseCoef = (float) std::exp (std::log (0.0001) / juce::jmax (1.0, sp.releaseMs * sr / 1000.0));
+    v.cutoffCur = sp.cutoff;
     v.useFilter = sp.cutoff < 19500.0f;
     if (v.useFilter)
         svfCoeffs (sr, sp.cutoff, 0.707f + sp.resonance * 8.0f, v.fg, v.fk, v.fa1, v.fa2, v.fa3);
@@ -465,7 +468,7 @@ void Renderer::renderChunk (const Snapshot& snap, float* L, float* R, int n)
         }
     }
 
-    renderVoices (n);
+    renderVoices (snap, n);
     renderNoteVoices (snap, n);
 
     juce::FloatVectorOperations::clear (L, n);
@@ -542,10 +545,14 @@ void Renderer::triggerPatternSteps (const Snapshot& snap, const SnapPattern& pat
         if (sb < clipStart - 1.0e-9 || sb >= clipEnd - 1.0e-9) continue;
         const int step = (int) (((k % L) + L) % L);
         const int o = off + juce::jlimit (0, len - 1, (int) std::floor ((sb - b0) * spb));
-        const int gate = (int) (stepLen * spb * 0.95);
         for (int pad = 0; pad < kNumPads; ++pad)
             if (const auto v = pat.get (pad, step))
-                padOn (snap, pad, v, slot, o, gate, false);
+            {
+                // nota esticada: segura (modo Gate/Loop) pelos passos que ela cobre, sem passar do fim do clipe
+                const int steps = pat.getLen (pad, step);
+                const double lenBeats = juce::jmin (steps * stepLen - stepLen * 0.05, clipEnd - sb);
+                padOn (snap, pad, v, slot, o, juce::jmax (1, (int) (lenBeats * spb)), false, steps > 1);
+            }
     }
 }
 
@@ -588,7 +595,7 @@ void Renderer::renderAudioClip (const Snapshot& snap, const SnapClip& c, int off
     }
 }
 
-void Renderer::renderVoices (int n)
+void Renderer::renderVoices (const Snapshot& snap, int n)
 {
     const int maxSlot = bus.getNumChannels() / 2;
     int active = 0;
@@ -600,6 +607,29 @@ void Renderer::renderVoices (int n)
         float* L = bus.getWritePointer (slot * 2);
         float* R = bus.getWritePointer (slot * 2 + 1);
         busUsed[slot] = true;
+        // botoes do pad em tempo real (filtro, ressonancia, volume, pan, tom) enquanto o som toca
+        if (v.pad >= 0 && v.pad < kNumPads)
+        {
+            const auto& sp = snap.pads[(size_t) v.pad];
+            if (sp.buf == v.buf)
+            {
+                const float g = sp.gain * v.velGain;
+                v.gL = g * (sp.pan > 0 ? 1.0f - sp.pan : 1.0f);
+                v.gR = g * (sp.pan < 0 ? 1.0f + sp.pan : 1.0f);
+                v.inc = sp.bufSR / sr * sp.pitchRatio;
+            }
+            // corte suavizado em escala logaritmica (sem estalo ao girar o botao)
+            const float target = juce::jlimit (20.0f, 20000.0f, sp.cutoff);
+            v.cutoffCur = std::exp (std::log (juce::jmax (20.0f, v.cutoffCur)) + (std::log (target) - std::log (juce::jmax (20.0f, v.cutoffCur))) * 0.35f);
+            if (std::abs (v.cutoffCur - target) < 1.0f) v.cutoffCur = target;
+            if (v.cutoffCur < 19500.0f)
+            {
+                if (! v.useFilter) { v.ic1[0] = v.ic1[1] = v.ic2[0] = v.ic2[1] = 0; }
+                v.useFilter = true;
+                svfCoeffs (sr, v.cutoffCur, 0.707f + sp.resonance * 8.0f, v.fg, v.fk, v.fa1, v.fa2, v.fa3);
+            }
+            else v.useFilter = false;
+        }
         const float* d0 = v.buf->getReadPointer (0);
         const float* d1 = v.channels > 1 ? v.buf->getReadPointer (1) : d0;
         const int start = juce::jmin (n, v.delay);
