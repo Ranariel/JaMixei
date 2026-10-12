@@ -95,6 +95,22 @@ instaladas) são lidos pelo decodificador do próprio Windows. Se algum arquivo 
 | Shift ao arrastar | Mover sem a grade |
 | Esc | Parar todas as prévias e sons |
 
+## Aba INSTRUMENTOS (piano roll, estilo FL Studio)
+
+- **Ctrl+4** ou a aba *Instrumentos*: lista de instrumentos à esquerda, piano roll no meio e um piano completo de 88 teclas embaixo.
+- **+ Instrumento**: piano, piano elétrico, órgão, synth lead, synth pad, pluck, baixo 808, baixo synth, cordas, metais, sinos, marimba.
+  Pode ter vários ao mesmo tempo (ex.: piano + 808 + cordas); clique com o botão direito para renomear, trocar o som, duplicar ou remover.
+- **Piano roll**: clique para criar nota, arraste para mover, puxe a borda direita para mudar a duração, botão direito apaga
+  (arrastando apaga várias). Shift/Ctrl+arrastar seleciona; Del apaga; Ctrl+A seleciona tudo; Ctrl+D duplica; Alt = sem grade.
+  Embaixo fica a faixa de **velocidade** (arraste as barrinhas). Ctrl+roda = altura das linhas.
+- **Teclado do PC** (como no FL Studio): Z S X D C V G B H N J M = uma oitava, Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P = a de cima.
+  **-** e **=** mudam a oitava.
+- **Teclado MIDI / controlador**: é detectado sozinho. Na aba Instrumentos toca o instrumento (com pedal de sustain);
+  nas outras abas, as notas a partir do C1 (36) tocam os pads A1, A2... (padrão MPC).
+- **Gravar**: ligue o ● e toque no teclado: as notas entram no piano roll, alinhadas na grade escolhida.
+- As notas ficam dentro do **padrão**: Play nesta aba toca o padrão em loop; **No arranjo** coloca o padrão na música.
+- **Exportar** um beat feito só no modo PADRÃO: em Exportar, escolha *Trecho: Padrão atual*.
+
 ## Novidades da versão 1.4.x (atualização automática)
 
 - **Instrumentos**: botão *Instrumentos* nos pads (ou Ferramentas > Instrumentos). Piano, piano elétrico, órgão,

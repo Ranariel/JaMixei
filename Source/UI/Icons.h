@@ -10,7 +10,7 @@ enum class Icon
     Play, Pause, Stop, Record, Mic, Loop, Metronome, Undo, Redo, Sliders, Gear,
     Folder, FileAudio, FileVideo, ArrowUp, Music, Download, Desktop, Plus,
     Arrange, Waveform, Grid, Mixer, Headphones, Scissors, Magnet, Fit, Follow, Pads,
-    Tap, Trash, ChevronRight, ChevronDown, Check, Bolt
+    Tap, Trash, ChevronRight, ChevronDown, Check, Bolt, Piano
 };
 
 namespace Icons

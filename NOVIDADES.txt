@@ -1,4 +1,5 @@
-- Instrumentos: piano, piano elétrico, órgão, synths, baixo 808, cordas, metais, sinos e marimba (botão Instrumentos nos pads)
-- Play corrigido: a música repete do começo no fim; na aba Editor, Play/Espaço toca o sample e "Repetir" fica em loop
-- Configurações de áudio novas: 44,1 kHz (qualidade de CD), 48 kHz e outras taxas
-- Exportação em WAV 16 bits qualidade de CD, 24/32 bits, FLAC 16/24 bits, MP3 e OGG
+- Nova aba INSTRUMENTOS: piano roll estilo FL Studio + piano completo de 88 teclas
+- Vários instrumentos ao mesmo tempo (piano, synths, baixo 808, cordas...), com volume, pan, ataque, release e transpor
+- Toque pelo teclado do PC (Z S X D C... / Q 2 W 3 E...) ou por teclado MIDI (com pedal de sustain) e grave as notas
+- Teclado/controlador MIDI também toca os pads nas outras abas
+- Correções: swing também nas notas, tamanho do padrão estica os clipes do arranjo, exportar o beat do modo PADRÃO

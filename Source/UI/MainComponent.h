@@ -10,6 +10,7 @@
 #include "BrowserPanel.h"
 #include "Icons.h"
 #include "Updater.h"
+#include "InstrumentView.h"
 
 namespace mp
 {
@@ -56,6 +57,7 @@ private:
     void showShortcuts();
     void showInstruments();
     void playPressed();
+    void releasePcNotes();
     void confirmDiscard (std::function<void()> then);
     void changeLanguage (i18n::Lang l);
     bool skipDiscard = false;
@@ -74,6 +76,7 @@ private:
     std::unique_ptr<SampleEditor> editor;
     std::unique_ptr<SequencerView> sequencer;
     std::unique_ptr<MixerView> mixer;
+    std::unique_ptr<InstrumentView> instView;
     std::unique_ptr<PadPanel> pads;
     std::unique_ptr<Divider> leftDivider, bottomDivider;
     std::unique_ptr<StatusBar> statusBar;
@@ -84,6 +87,8 @@ private:
     int browserWidth = 380, padHeight = 300;
     std::array<bool, 16> padKeyDown {};
     std::array<int, 16> padKeyPad {};
+    std::map<int, int> pcNoteKeys;          // tecla do PC -> nota tocando (aba Instrumentos)
+    static constexpr int kInstrumentsTab = 3, kMixerTab = 4, kNumTabs = 5;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::uint32 lastAutosave = 0;
     bool shuttingDown = false, quitDialogOpen = false, chooserActive = false;

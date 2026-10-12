@@ -11,6 +11,26 @@ struct PadEvent
     bool on = true;
 };
 
+struct NoteEvent
+{
+    int channel = -1;           // -1 = canal atual (Snapshot::currentChannel)
+    int pitch = 60;
+    uint8_t vel = 100;
+    bool on = true;
+};
+
+// nota tocada ao vivo durante a gravacao (inicio e fim chegam separados)
+struct RecordedNote
+{
+    int patternId = 0;
+    int channelId = 0;
+    int pitch = 60;
+    double beat = 0;            // posicao dentro do padrao
+    double absBeat = 0;         // posicao absoluta (para calcular a duracao)
+    uint8_t vel = 0;
+    bool on = true;
+};
+
 struct RecordedHit
 {
     int patternId = 0;
@@ -74,6 +94,13 @@ public:
     void padOn (const Snapshot& snap, int pad, uint8_t vel, int slot, int offset, int gateSamples, bool fromLive);
     void padOff (int pad);
     void allNotesOff (bool hard);
+
+    // --- instrumentos (piano roll / teclado) ---
+    void noteOn (const Snapshot& snap, int channel, int pitch, uint8_t vel, int slot, int offset, int gateSamples, bool live);
+    void noteOff (const Snapshot& snap, int channel, int pitch);   // so notas tocadas ao vivo
+    SpscQueue<RecordedNote, 1024> recordedNotes;
+    // teclas soando no instrumento atual (para acender o teclado na tela): bit = nota MIDI
+    std::atomic<juce::uint64> soundingLo { 0 }, soundingHi { 0 };
 
     // gravacao de pads (consumido pela UI)
     SpscQueue<RecordedHit, 512> recordedHits;
@@ -143,6 +170,29 @@ private:
     void processMaster (const Snapshot& snap, float* L, float* R, int n);
     static float evalAuto (const std::vector<AutoPoint>& pts, double beat, float def);
     void recordLiveHit (const Snapshot& snap, int pad, uint8_t vel);
+    bool livePatternPosition (const Snapshot& snap, const SnapPattern*& pat, double& local) const;
+    void triggerPatternNotes (const Snapshot& snap, const SnapPattern& pat, int slot, double origin,
+                              double clipStart, double clipEnd, int off, int len, double b0);
+    void renderNoteVoices (const Snapshot& snap, int n);
+
+    struct NoteVoice
+    {
+        bool active = false;
+        int channel = -1, pitch = 60, slot = 0;
+        bool live = false;
+        instruments::MultiPtr multi;   // mantem o buffer vivo enquanto a voz toca
+        const float* d0 = nullptr; const float* d1 = nullptr;
+        int zoneStart = 0, zoneEnd = 0, loopStart = -1, loopEnd = -1;
+        double pos = 0, inc = 1;
+        float gL = 1, gR = 1;
+        int delay = 0;
+        int gateRemaining = -1;      // amostras ate soltar a nota (sequenciada); -1 = segura ate noteOff
+        int stage = 0;               // 0 ataque, 1 sustentacao, 2 release
+        float env = 0, attackInc = 1, releaseCoef = 0.999f;
+        juce::uint64 age = 0;
+    };
+    static constexpr int kMaxNoteVoices = 96;
+    std::array<NoteVoice, kMaxNoteVoices> noteVoices;
 
     double sr = 44100;
     int maxBlock = 512;

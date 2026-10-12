@@ -98,12 +98,42 @@ struct Pad
     bool isEmpty() const { return sourceId < 0 || endSec <= startSec; }
 };
 
+// nota do piano roll (instrumentos): posicao e duracao em tempos (beats) dentro do padrao
+struct Note
+{
+    int channelId = 0;
+    int pitch = 60;            // MIDI (60 = C4, do central)
+    double start = 0;          // tempos desde o inicio do padrao
+    double length = 0.25;      // tempos
+    uint8_t vel = 100;
+    bool operator== (const Note& o) const
+    {
+        return channelId == o.channelId && pitch == o.pitch && start == o.start && length == o.length && vel == o.vel;
+    }
+};
+
+// canal de instrumento ("channel rack"): piano, synth, baixo...
+struct InstrumentChannel
+{
+    int id = 0;
+    juce::String name;
+    int instrument = 0;        // instruments::Id
+    float volumeDb = 0.0f;
+    float pan = 0.0f;
+    float attackMs = 2.0f;
+    float releaseMs = 250.0f;
+    int transpose = 0;         // semitons
+    bool mute = false;
+    juce::Colour colour { 0xff4fc3f7 };
+};
+
 struct Pattern
 {
     int id = 0;
     juce::String name;
     int lengthSteps = 16;
     std::vector<uint8_t> vel;  // kNumPads * kMaxSteps, indice [pad * kMaxSteps + step]
+    std::vector<Note> notes;   // notas dos instrumentos (piano roll)
 
     Pattern() { vel.assign ((size_t) kNumPads * kMaxSteps, 0); }
     uint8_t get (int pad, int step) const { return vel[(size_t) pad * kMaxSteps + (size_t) step]; }
@@ -140,11 +170,13 @@ public:
     float delayTone = 0.6f;
     int currentPatternId = -1;
     int liveTrackId = -1;          // faixa de padrao que recebe os pads tocados ao vivo
+    int currentChannelId = -1;     // instrumento selecionado na aba Instrumentos
 
     std::vector<SourceInfo> sources;
     std::vector<Track> tracks;
     std::vector<Clip> clips;
     std::vector<Pattern> patterns;
+    std::vector<InstrumentChannel> channels;
     std::array<Pad, kNumPads> pads;
 
     juce::File projectFile;
@@ -160,6 +192,8 @@ public:
     Clip* findClip (int id);
     Pattern* findPattern (int id);
     const Pattern* findPattern (int id) const;
+    InstrumentChannel* findChannel (int id);
+    const InstrumentChannel* findChannel (int id) const;
     SourceInfo* findSource (int id);
     const SourceInfo* findSource (int id) const;
 
@@ -181,6 +215,7 @@ public:
 
     Track& addTrack (TrackType type, const juce::String& name);
     Pattern& addPattern (const juce::String& name);
+    InstrumentChannel& addChannel (int instrument, const juce::String& name);
 
     static juce::Colour trackColour (int index);
 

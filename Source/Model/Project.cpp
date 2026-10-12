@@ -21,7 +21,7 @@ void Project::reset()
     metronome = false; masterVolDb = 0;
     reverbSize = 0.6f; reverbDamp = 0.4f; reverbWidth = 1.0f;
     delayBeats = 0.75; delayFeedback = 0.35f; delayTone = 0.6f;
-    sources.clear(); tracks.clear(); clips.clear(); patterns.clear();
+    sources.clear(); tracks.clear(); clips.clear(); patterns.clear(); channels.clear(); currentChannelId = -1;
     projectFile = juce::File();
 
     for (int i = 0; i < kNumPads; ++i)
@@ -64,6 +64,19 @@ Track* Project::findTrack (int id)            { for (auto& t : tracks) if (t.id 
 const Track* Project::findTrack (int id) const { for (auto& t : tracks) if (t.id == id) return &t; return nullptr; }
 int Project::trackIndex (int id) const         { for (size_t i = 0; i < tracks.size(); ++i) if (tracks[i].id == id) return (int) i; return -1; }
 Clip* Project::findClip (int id)               { for (auto& c : clips) if (c.id == id) return &c; return nullptr; }
+InstrumentChannel* Project::findChannel (int id)             { for (auto& c : channels) if (c.id == id) return &c; return nullptr; }
+const InstrumentChannel* Project::findChannel (int id) const { for (auto& c : channels) if (c.id == id) return &c; return nullptr; }
+
+InstrumentChannel& Project::addChannel (int instrument, const juce::String& name)
+{
+    InstrumentChannel c;
+    c.id = newId();
+    c.instrument = instrument;
+    c.name = name;
+    channels.push_back (c);
+    return channels.back();
+}
+
 Pattern* Project::findPattern (int id)         { for (auto& p : patterns) if (p.id == id) return &p; return nullptr; }
 const Pattern* Project::findPattern (int id) const { for (auto& p : patterns) if (p.id == id) return &p; return nullptr; }
 SourceInfo* Project::findSource (int id)       { for (auto& s : sources) if (s.id == id) return &s; return nullptr; }
@@ -207,9 +220,30 @@ juce::var Project::toVar() const
             for (int s = 0; s < kMaxSteps; ++s)
                 if (auto v = p.get (pad, s)) { notes.add (pad); notes.add (s); notes.add ((int) v); }
         o->setProperty ("notes", notes);
+        // piano roll: [canal, nota, inicio, duracao, vel, ...]
+        juce::Array<juce::var> keys;
+        for (auto& n : p.notes)
+        {
+            keys.add (n.channelId); keys.add (n.pitch); keys.add (n.start); keys.add (n.length); keys.add ((int) n.vel);
+        }
+        o->setProperty ("keys", keys);
         pts.add (juce::var (o));
     }
     root->setProperty ("patterns", pts);
+
+    juce::Array<juce::var> chs;
+    for (auto& c : channels)
+    {
+        auto* o = new DO();
+        o->setProperty ("id", c.id); o->setProperty ("name", c.name); o->setProperty ("instrument", c.instrument);
+        o->setProperty ("volumeDb", c.volumeDb); o->setProperty ("pan", c.pan);
+        o->setProperty ("attackMs", c.attackMs); o->setProperty ("releaseMs", c.releaseMs);
+        o->setProperty ("transpose", c.transpose); o->setProperty ("mute", c.mute);
+        o->setProperty ("colour", (juce::int64) c.colour.getARGB());
+        chs.add (juce::var (o));
+    }
+    root->setProperty ("channels", chs);
+    root->setProperty ("currentChannelId", currentChannelId);
     return juce::var (root);
 }
 
@@ -231,7 +265,7 @@ static juce::Colour colourOr (const juce::var& o, const char* name, juce::Colour
 
 void Project::fromVar (const juce::var& r)
 {
-    sources.clear(); tracks.clear(); clips.clear(); patterns.clear();
+    sources.clear(); tracks.clear(); clips.clear(); patterns.clear(); channels.clear(); currentChannelId = -1;
     nextId = getOr (r, "nextId", 1);
     bpm = getOr (r, "bpm", 120.0);
     swing = getOr (r, "swing", 50.0f);
@@ -318,8 +352,30 @@ void Project::fromVar (const juce::var& r)
                     int pad = (*n)[i], st = (*n)[i + 1], v = (*n)[i + 2];
                     if (pad >= 0 && pad < kNumPads && st >= 0 && st < kMaxSteps) p.set (pad, st, (uint8_t) juce::jlimit (0, 127, v));
                 }
+            if (auto* k = o.getProperty ("keys", {}).getArray())
+                for (int i = 0; i + 4 < k->size(); i += 5)
+                {
+                    Note n;
+                    n.channelId = (*k)[i]; n.pitch = juce::jlimit (0, 127, (int) (*k)[i + 1]);
+                    n.start = juce::jmax (0.0, (double) (*k)[i + 2]); n.length = juce::jmax (1.0 / 64.0, (double) (*k)[i + 3]);
+                    n.vel = (uint8_t) juce::jlimit (1, 127, (int) (*k)[i + 4]);
+                    p.notes.push_back (n);
+                }
             patterns.push_back (p);
         }
+    if (auto* a = r.getProperty ("channels", {}).getArray())
+        for (auto& o : *a)
+        {
+            InstrumentChannel c;
+            c.id = getOr (o, "id", 0); c.name = getOr (o, "name", juce::String()); c.instrument = getOr (o, "instrument", 0);
+            c.volumeDb = getOr (o, "volumeDb", 0.0f); c.pan = getOr (o, "pan", 0.0f);
+            c.attackMs = getOr (o, "attackMs", 2.0f); c.releaseMs = getOr (o, "releaseMs", 250.0f);
+            c.transpose = getOr (o, "transpose", 0); c.mute = getOr (o, "mute", false);
+            c.colour = colourOr (o, "colour", c.colour);
+            channels.push_back (c);
+        }
+    currentChannelId = getOr (r, "currentChannelId", -1);
+    if (findChannel (currentChannelId) == nullptr) currentChannelId = channels.empty() ? -1 : channels.front().id;
 
     // garantias minimas
     if (patterns.empty()) { auto& p = addPattern (TR ("Padrão 1")); currentPatternId = p.id; }
@@ -335,6 +391,7 @@ void Project::fromVar (const juce::var& r)
     for (auto& t : tracks) maxId = std::max (maxId, t.id);
     for (auto& c : clips) maxId = std::max (maxId, c.id);
     for (auto& p : patterns) maxId = std::max (maxId, p.id);
+    for (auto& c : channels) maxId = std::max (maxId, c.id);
     nextId = std::max (nextId, maxId + 1);
 }
 

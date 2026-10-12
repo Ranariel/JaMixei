@@ -41,8 +41,50 @@ void AudioEngine::initialise (const juce::XmlElement* savedState)
     deviceManager.addAudioCallback (this);
 }
 
+void AudioEngine::enableAllMidiInputs()
+{
+    for (auto& d : juce::MidiInput::getAvailableDevices())
+        if (! enabledMidi.contains (d.identifier))
+        {
+            deviceManager.setMidiInputDeviceEnabled (d.identifier, true);
+            deviceManager.addMidiInputDeviceCallback (d.identifier, this);
+            enabledMidi.add (d.identifier);
+        }
+}
+
+juce::StringArray AudioEngine::midiInputNames() const
+{
+    juce::StringArray names;
+    for (auto& d : juce::MidiInput::getAvailableDevices())
+        if (enabledMidi.contains (d.identifier)) names.add (d.name);
+    return names;
+}
+
+void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
+{
+    if (m.isNoteOn())
+    {
+        midiActivity.fetch_add (1);
+        const auto vel = (uint8_t) juce::jlimit (1, 127, (int) m.getVelocity());
+        if (midiToInstrument.load()) midiNoteEvents.push ({ -1, m.getNoteNumber(), vel, true });
+        else if (m.getNoteNumber() >= 36 && m.getNoteNumber() < 36 + kNumPads)      // C1 = pad A1 (padrao MPC)
+            midiPadEvents.push ({ m.getNoteNumber() - 36, vel, true });
+    }
+    else if (m.isNoteOff())
+    {
+        if (midiToInstrument.load()) midiNoteEvents.push ({ -1, m.getNoteNumber(), 0, false });
+        else if (m.getNoteNumber() >= 36 && m.getNoteNumber() < 36 + kNumPads)
+            midiPadEvents.push ({ m.getNoteNumber() - 36, 0, false });
+    }
+    else if (m.isSustainPedalOn())  sustainPedal = true;
+    else if (m.isSustainPedalOff()) sustainPedal = false;
+    else if (m.isAllNotesOff() || m.isAllSoundOff()) panicReq = true;
+}
+
 void AudioEngine::shutdown()
 {
+    for (auto& id : enabledMidi) deviceManager.removeMidiInputDeviceCallback (id, this);
+    enabledMidi.clear();
     deviceManager.removeAudioCallback (this);
     deviceManager.closeAudioDevice();
     std::unique_ptr<juce::AudioTransportSource> fp;
@@ -186,11 +228,28 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* in, int 
     if (panicReq.exchange (false)) renderer.allNotesOff (true);
 
     PadEvent e;
-    while (padEvents.pop (e))
+    while (padEvents.pop (e) || midiPadEvents.pop (e))
     {
         if (e.on) renderer.padOn (*current, e.pad, e.vel, current->liveTrackSlot, 0, -1, true);
         else renderer.padOff (e.pad);
     }
+    // pedal de sustain: as notas soltas ficam soando ate o pedal subir
+    const bool pedal = sustainPedal.load();
+    NoteEvent ne;
+    while (noteEvents.pop (ne) || midiNoteEvents.pop (ne))
+    {
+        if (ne.on)
+        {
+            heldBySustain[(size_t) juce::jlimit (0, 127, ne.pitch)] = false;
+            renderer.noteOn (*current, ne.channel, ne.pitch, ne.vel, current->liveTrackSlot, 0, -1, true);
+        }
+        else if (pedal) heldBySustain[(size_t) juce::jlimit (0, 127, ne.pitch)] = true;
+        else renderer.noteOff (*current, ne.channel, ne.pitch);
+    }
+    if (! pedal && sustainApplied)
+        for (int k = 0; k < 128; ++k)
+            if (heldBySustain[(size_t) k]) { heldBySustain[(size_t) k] = false; renderer.noteOff (*current, -1, k); }
+    sustainApplied = pedal;
 
     const double blockStartBeat = renderer.posBeats;
     const bool wasPlaying = renderer.playing;

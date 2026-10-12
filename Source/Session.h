@@ -5,6 +5,7 @@
 #include "Audio/Snapshot.h"
 #include "Audio/AudioEngine.h"
 #include <set>
+#include <map>
 
 namespace mp
 {
@@ -29,6 +30,7 @@ struct ExportSettings
     int format = 0;          // 0 WAV, 1 FLAC, 2 OGG, 3 MP3
     int mp3Quality = 0;      // 0 = 320, 1 = 256, 2 = 192, 3 = 128 kbps
     bool onlyLoop = false;
+    int patternRepeats = 0;    // > 0: exporta o padrao atual (modo PADRAO) repetido N vezes
     double tailSeconds = 2.0;
     bool importAfter = false;  // "resample": importa o resultado como nova fonte
     int padTarget = -1;        // resample direto para um pad
@@ -45,6 +47,7 @@ public:
     SourcePool sources;
     std::unique_ptr<StretchCache> stretch;
     PadBufferCache padCache;
+    instruments::InstrumentBank bank;      // multisamples dos instrumentos (aba Instrumentos)
     AudioEngine engine;
     juce::ApplicationProperties props;
 
@@ -107,9 +110,22 @@ public:
     void padUp (int pad);
     int chopToPads (int sourceId, const std::vector<double>& points, double endSec, int firstPad);
 
+    // --- instrumentos (channel rack + piano roll) ---
+    int addChannel (int instrument);                 // devolve o id do canal novo (e seleciona)
+    void removeChannel (int channelId);
+    void setChannelInstrument (int channelId, int instrument);
+    InstrumentChannel* currentChannel() { return project.findChannel (project.currentChannelId); }
+    void selectChannel (int channelId);
+    void noteDown (int pitch, uint8_t vel = 100);    // teclado da tela / PC: toca o canal atual
+    void noteUp (int pitch);
+    double noteQuantize = 0.25;                      // grade da gravacao de notas (tempos); 0 = livre
+    static float defaultRelease (int instrument);
+
     // --- padroes ---
     Pattern* currentPattern() { return project.findPattern (project.currentPatternId); }
     int newPattern (bool duplicateCurrent);
+    // muda o tamanho do padrao atual; ao aumentar repete os passos dos pads e estica os clipes do arranjo
+    void setPatternLength (int steps);
     void deletePattern (int id);
 
     // --- transporte ---
@@ -154,6 +170,9 @@ private:
     bool dirty = false;
     juce::uint32 statusTime = 0;
     bool recordUndoPushed = false;
+    std::map<std::pair<int, int>, RecordedNote> pendingNotes;   // (canal, nota) -> inicio gravado
+    int midiScanCountdown = 0;
+    void finishRecordedNote (const RecordedNote& on, double endAbs);
     AudioRecOptions recOptions;
     float inputPeakHold = 0;
     bool savedLoopOn = false;

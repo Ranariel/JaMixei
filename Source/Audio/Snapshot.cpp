@@ -1,4 +1,5 @@
 #include "Snapshot.h"
+#include <map>
 
 namespace mp
 {
@@ -35,7 +36,7 @@ BufferPtr PadBufferCache::getForPad (int padIndex, const Pad& pad, const SourceP
 static float dbToGain (float db) { return db <= -60.0f ? 0.0f : juce::Decibels::decibelsToGain (db); }
 
 SnapshotPtr SnapshotBuilder::build (const Project& p, SourcePool& sources, StretchCache* stretch,
-                                    PadBufferCache& padCache, double sampleRate)
+                                    PadBufferCache& padCache, double sampleRate, const instruments::InstrumentBank* bank)
 {
     auto s = std::make_shared<Snapshot>();
     s->sampleRate = sampleRate > 0 ? sampleRate : 44100.0;
@@ -71,12 +72,39 @@ SnapshotPtr SnapshotBuilder::build (const Project& p, SourcePool& sources, Stret
         s->tracks.push_back (std::move (st));
     }
 
+    // canais de instrumento (aba Instrumentos)
+    std::map<int, int> channelIndex;
+    for (auto& c : p.channels)
+    {
+        SnapChannel sc;
+        sc.id = c.id;
+        if (bank != nullptr) sc.multi = bank->get ((instruments::Id) c.instrument);
+        const float g = c.mute ? 0.0f : dbToGain (c.volumeDb);
+        sc.gainL = g * (c.pan > 0 ? 1.0f - c.pan : 1.0f);
+        sc.gainR = g * (c.pan < 0 ? 1.0f + c.pan : 1.0f);
+        sc.attackMs = c.attackMs;
+        sc.releaseMs = c.releaseMs;
+        sc.transpose = c.transpose;
+        sc.mono = instruments::isMono ((instruments::Id) c.instrument);
+        channelIndex[c.id] = (int) s->channels.size();
+        if (c.id == p.currentChannelId) s->currentChannel = (int) s->channels.size();
+        s->channels.push_back (std::move (sc));
+    }
+
     for (size_t i = 0; i < p.patterns.size(); ++i)
     {
         SnapPattern sp;
         sp.id = p.patterns[i].id;
         sp.length = juce::jlimit (1, kMaxSteps, p.patterns[i].lengthSteps);
         sp.vel = p.patterns[i].vel;
+        const double patLen = sp.length / (double) kStepsPerBeat;
+        for (auto& n : p.patterns[i].notes)
+        {
+            auto it = channelIndex.find (n.channelId);
+            if (it == channelIndex.end() || n.start >= patLen - 1.0e-9) continue;
+            sp.notes.push_back ({ it->second, n.pitch, n.start, juce::jmax (1.0 / 64.0, n.length), n.vel });
+        }
+        std::sort (sp.notes.begin(), sp.notes.end(), [] (auto& a, auto& b) { return a.start < b.start; });
         if (sp.id == p.currentPatternId) s->currentPatternIndex = (int) i;
         s->patterns.push_back (std::move (sp));
     }

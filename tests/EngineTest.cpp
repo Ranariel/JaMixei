@@ -348,6 +348,95 @@ int main()
                        (displayName (id) + " " + noteName (midi) + ": pico " + juce::String (pk, 2) + ", afinacao " + juce::String (cents, 1) + " cents").toStdString());
             }
         }
+        // tempo para gerar cada instrumento (multisample completo)
+        {
+            juce::String line = "  tempos de geracao:";
+            double total = 0;
+            for (int k = 0; k < (int) Id::count; ++k)
+            {
+                const auto t0 = juce::Time::getMillisecondCounterHiRes();
+                auto ms = renderMulti ((Id) k);
+                const double dt = juce::Time::getMillisecondCounterHiRes() - t0;
+                total += dt;
+                line << " " << displayName ((Id) k) << "=" << (int) dt << "ms";
+                CHECK (ms != nullptr && ms->zones.size() >= 20, (displayName ((Id) k) + ": multisample com todas as zonas").toStdString());
+            }
+            std::cout << line << std::endl;
+            CHECK (total < 20000.0, "todos os instrumentos gerados em menos de 20 s (" + std::to_string ((int) total) + " ms)");
+        }
+        // ---- aba Instrumentos: canais, notas com duracao, loop de sustentacao, gravacao
+        {
+            Session ses;
+            const int pianoCh = ses.addChannel ((int) Id::Piano);
+            const int padCh = ses.addChannel ((int) Id::SynthPad);
+            ses.selectChannel (pianoCh);
+            for (int w = 0; w < 600 && (ses.bank.get (Id::Piano) == nullptr || ses.bank.get (Id::SynthPad) == nullptr); ++w)
+                juce::Thread::sleep (50);
+            CHECK (ses.bank.get (Id::Piano) != nullptr && ses.bank.get (Id::SynthPad) != nullptr, "multisamples gerados (piano e pad)");
+            auto* pat = ses.currentPattern();
+            pat->lengthSteps = 32;   // 2 compassos
+            pat->notes.push_back ({ pianoCh, 60, 0.0, 1.0, 110 });
+            pat->notes.push_back ({ pianoCh, 64, 1.0, 0.5, 90 });
+            pat->notes.push_back ({ padCh, 48, 0.0, 7.5, 100 });
+            auto j = ses.project.toJson();
+            Project pj; pj.fromJson (j);
+            CHECK (pj.channels.size() == 2 && pj.findPattern (pat->id)->notes.size() == 3 && pj.toJson() == j, "notas e instrumentos salvos/abertos (JSON)");
+
+            auto sn = ses.buildSnapshot (44100);
+            CHECK (sn->channels.size() == 2 && sn->channels[0].multi != nullptr && sn->patterns[0].notes.size() == 3, "snapshot com canais e notas");
+            Renderer rn; rn.prepare (44100, 512);
+            rn.patternMode = true; rn.playing = true; rn.posBeats = 0;
+            juce::AudioBuffer<float> ob (2, (int) (44100 * 3.8));   // 7,6 tempos a 120 BPM
+            rn.process (*sn, ob, 0, ob.getNumSamples());
+            CHECK (ob.getMagnitude (0, 0, 22050) > 0.05f, "notas do piano roll tocam");
+            // pad segura 7,5 tempos (3,75 s) mesmo com amostra de 2,6 s: loop de sustentacao
+            CHECK (ob.getRMSLevel (0, (int) (44100 * 3.3), 4410) > 0.01f, "nota longa sustenta (loop)");
+            bool finiteAll = true;
+            for (int c = 0; c < 2; ++c) for (int i = 0; i < ob.getNumSamples(); ++i) if (! std::isfinite (ob.getSample (c, i))) finiteAll = false;
+            CHECK (finiteAll && ob.getMagnitude (0, ob.getNumSamples()) <= 1.0f, "sem NaN e sem passar de 0 dBFS");
+
+            // afinacao entre zonas do multisample (zona a cada 3 semitons): C#4 vem do C4 esticado
+            for (int pitch : { 61, 62, 45, 80 })
+            {
+                Renderer rl; rl.prepare (44100, 512);
+                rl.noteOn (*sn, 0, pitch, 110, 0, 0, -1, true);
+                juce::AudioBuffer<float> lb (2, 44100);
+                rl.process (*sn, lb, 0, lb.getNumSamples());
+                const double exp = 440.0 * std::pow (2.0, (pitch - 69) / 12.0);
+                juce::AudioBuffer<float> mono (2, lb.getNumSamples());
+                mono.makeCopyOf (lb);
+                const double f = pitchOf (mono, 44100.0, 0.25, exp);
+                const double cents = 1200.0 * std::log2 (f / exp);
+                CHECK (std::abs (cents) < 12.0, ("piano ao vivo " + noteName (pitch) + ": " + juce::String (cents, 1) + " cents").toStdString());
+                rl.noteOff (*sn, 0, pitch);
+                rl.process (*sn, lb, 0, lb.getNumSamples());
+                CHECK (lb.getRMSLevel (0, 30000, 10000) < 0.002f, "soltar a tecla encerra a nota (release)");
+            }
+
+            // gravacao do teclado no padrao
+            Renderer rr2; rr2.prepare (44100, 512);
+            rr2.patternMode = true; rr2.playing = true; rr2.recording = true; rr2.posBeats = 2.0;
+            rr2.noteOn (*sn, -1, 67, 100, 0, 0, -1, true);
+            rr2.posBeats = 3.0;
+            rr2.noteOff (*sn, -1, 67);
+            RecordedNote r1, r2;
+            const bool got = rr2.recordedNotes.pop (r1) && rr2.recordedNotes.pop (r2);
+            CHECK (got && r1.on && ! r2.on && r1.pitch == 67 && std::abs (r1.beat - 2.0) < 1e-6 && std::abs (r2.absBeat - r1.absBeat - 1.0) < 1e-6,
+                   "gravacao de notas do teclado (inicio e fim)");
+
+            // exportacao com instrumentos
+            ExportSettings ex;
+            ex.file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("mp_inst_export.wav");
+            ses.addPatternClip (ses.project.liveTrackId, pat->id, 0.0);
+            juce::String ee;
+            CHECK (ses.renderToFile (ex, [] (float) { return true; }, ee), "exportacao com instrumentos");
+            double pk4, rms4, s4; bool f4;
+            analyseFile (ex.file, pk4, rms4, f4, s4);
+            CHECK (f4 && rms4 > 0.01 && pk4 <= 1.0, "mix exportado tem os instrumentos");
+            ses.removeChannel (padCh);
+            CHECK (ses.project.channels.size() == 1 && ses.currentPattern()->notes.size() == 2, "remover instrumento apaga as notas dele");
+        }
+
         Rendered rr;
         auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("jm_inst_test");
         dir.deleteRecursively();

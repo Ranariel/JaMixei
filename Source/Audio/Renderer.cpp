@@ -53,6 +53,7 @@ void Renderer::prepare (double sampleRate, int maxBlockSize)
 void Renderer::resetDsp()
 {
     for (auto& v : voices) { v.active = false; v.buf.reset(); }
+    for (auto& v : noteVoices) { v.active = false; v.multi.reset(); }
     for (auto& t : tracks)
     {
         for (auto& band : t.eq) for (auto& f : band) f.reset();
@@ -149,34 +150,220 @@ void Renderer::allNotesOff (bool hard)
         if (hard) v.active = false;
         else v.startRelease (8.0f, sr);
     }
+    for (auto& v : noteVoices)
+    {
+        if (! v.active) continue;
+        if (hard) { v.active = false; v.multi.reset(); }
+        else if (v.stage != 2)
+        {
+            v.stage = 2;
+            v.releaseCoef = juce::jmin (v.releaseCoef, (float) std::exp (std::log (0.0001) / juce::jmax (1.0, 0.06 * sr)));
+        }
+    }
+}
+
+bool Renderer::livePatternPosition (const Snapshot& snap, const SnapPattern*& pat, double& local) const
+{
+    pat = nullptr;
+    local = 0;
+    if (patternMode)
+    {
+        if (snap.currentPatternIndex < 0 || snap.currentPatternIndex >= (int) snap.patterns.size()) return false;
+        pat = &snap.patterns[(size_t) snap.currentPatternIndex];
+        const double len = pat->length / (double) kStepsPerBeat;
+        local = std::fmod (juce::jmax (0.0, posBeats), len);
+        return true;
+    }
+    for (auto& c : snap.clips)
+        if (c.isPattern && c.trackSlot == snap.liveTrackSlot && posBeats >= c.startBeat && posBeats < c.endBeat
+            && c.patternIndex >= 0 && c.patternIndex < (int) snap.patterns.size())
+        {
+            pat = &snap.patterns[(size_t) c.patternIndex];
+            const double len = pat->length / (double) kStepsPerBeat;
+            local = std::fmod (posBeats - c.startBeat + c.patternOffsetBeats, len);
+            return true;
+        }
+    return false;
 }
 
 void Renderer::recordLiveHit (const Snapshot& snap, int pad, uint8_t vel)
 {
     const SnapPattern* pat = nullptr;
     double local = 0;
-    if (patternMode)
-    {
-        if (snap.currentPatternIndex < 0 || snap.currentPatternIndex >= (int) snap.patterns.size()) return;
-        pat = &snap.patterns[(size_t) snap.currentPatternIndex];
-        const double len = pat->length / (double) kStepsPerBeat;
-        local = std::fmod (juce::jmax (0.0, posBeats), len);
-    }
-    else
-    {
-        for (auto& c : snap.clips)
-            if (c.isPattern && c.trackSlot == snap.liveTrackSlot && posBeats >= c.startBeat && posBeats < c.endBeat)
-            {
-                pat = &snap.patterns[(size_t) c.patternIndex];
-                const double len = pat->length / (double) kStepsPerBeat;
-                local = std::fmod (posBeats - c.startBeat + c.patternOffsetBeats, len);
-                break;
-            }
-        if (pat == nullptr) return;
-    }
+    if (! livePatternPosition (snap, pat, local)) return;
     int step = (int) std::floor (local * kStepsPerBeat + 0.5);
     step = ((step % pat->length) + pat->length) % pat->length;
     recordedHits.push ({ pat->id, pad, step, vel });
+}
+
+// ----------------------------------------------------------------------------
+//  Instrumentos: vozes de nota (multisample com loop de sustentacao)
+// ----------------------------------------------------------------------------
+void Renderer::noteOn (const Snapshot& snap, int channel, int pitch, uint8_t vel, int slot, int offset, int gateSamples, bool live)
+{
+    if (channel < 0) channel = snap.currentChannel;
+    if (channel < 0 || channel >= (int) snap.channels.size() || vel == 0) return;
+    const auto& ch = snap.channels[(size_t) channel];
+    if (live && recording && playing)
+    {
+        const SnapPattern* pat = nullptr;
+        double local = 0;
+        if (livePatternPosition (snap, pat, local))
+            recordedNotes.push ({ pat->id, ch.id, pitch, local, posBeats + offset / snap.samplesPerBeat(), vel, true });
+    }
+    if (ch.multi == nullptr || ch.multi->buffer == nullptr) return;
+    const int key = juce::jlimit (0, 127, pitch + ch.transpose);
+    const auto* z = ch.multi->zoneFor (key);
+    if (z == nullptr) return;
+
+    for (auto& v : noteVoices)
+    {
+        if (! v.active || v.channel != channel || v.stage == 2) continue;
+        // mesma tecla de novo, ou instrumento monofonico (baixo): solta a nota anterior rapidinho
+        if (v.pitch == pitch || ch.mono)
+        {
+            if (v.delay > offset) v.active = false;
+            else { v.stage = 2; v.releaseCoef = (float) std::exp (std::log (0.0001) / juce::jmax (1.0, 0.012 * sr)); }
+        }
+    }
+
+    NoteVoice* target = nullptr;
+    for (auto& v : noteVoices) if (! v.active) { target = &v; break; }
+    if (target == nullptr)
+    {
+        // sem vozes livres: rouba a mais antiga que ja esta soltando, senao a mais antiga
+        for (auto& v : noteVoices) if (v.stage == 2 && (target == nullptr || v.age < target->age)) target = &v;
+        if (target == nullptr) { target = &noteVoices[0]; for (auto& v : noteVoices) if (v.age < target->age) target = &v; }
+    }
+    auto& v = *target;
+    v = NoteVoice();
+    v.active = true;
+    v.channel = channel;
+    v.pitch = pitch;
+    v.slot = slot;
+    v.live = live;
+    v.multi = ch.multi;
+    const auto& buf = *ch.multi->buffer;
+    v.d0 = buf.getReadPointer (0);
+    v.d1 = buf.getNumChannels() > 1 ? buf.getReadPointer (1) : v.d0;
+    v.zoneStart = z->start; v.zoneEnd = z->end;
+    v.loopStart = z->loopStart; v.loopEnd = z->loopEnd;
+    v.pos = z->start;
+    v.inc = ch.multi->sampleRate / sr * std::pow (2.0, (key - z->root) / 12.0);
+    const float g = velToGain (vel);
+    v.gL = g * ch.gainL;
+    v.gR = g * ch.gainR;
+    v.delay = juce::jmax (0, offset);
+    v.gateRemaining = gateSamples > 0 ? gateSamples : -1;
+    const double atk = juce::jmax (1.0, ch.attackMs * sr / 1000.0);
+    v.attackInc = (float) (1.0 / atk);
+    v.env = ch.attackMs <= 0.05f ? 1.0f : 0.0f;
+    v.stage = v.env >= 1.0f ? 1 : 0;
+    v.releaseCoef = (float) std::exp (std::log (0.0001) / juce::jmax (1.0, juce::jmax (5.0f, ch.releaseMs) * sr / 1000.0));
+    v.age = ++voiceCounter;
+}
+
+void Renderer::noteOff (const Snapshot& snap, int channel, int pitch)
+{
+    // canal -1 (teclado/MIDI): solta a tecla em qualquer instrumento (o instrumento atual pode ter mudado com a tecla apertada)
+    const bool anyChannel = channel < 0;
+    if (channel < 0) channel = snap.currentChannel;
+    for (auto& v : noteVoices)
+        if (v.active && v.live && (anyChannel || v.channel == channel) && v.pitch == pitch && v.stage != 2)
+            v.stage = 2;
+    if (recording && playing && channel >= 0 && channel < (int) snap.channels.size())
+    {
+        const SnapPattern* pat = nullptr;
+        double local = 0;
+        if (livePatternPosition (snap, pat, local))
+            recordedNotes.push ({ pat->id, snap.channels[(size_t) channel].id, pitch, local, posBeats, 0, false });
+    }
+}
+
+void Renderer::triggerPatternNotes (const Snapshot& snap, const SnapPattern& pat, int slot, double origin,
+                                    double clipStart, double clipEnd, int off, int len, double b0)
+{
+    if (pat.notes.empty()) return;
+    const double spb = snap.samplesPerBeat();
+    const double b1 = b0 + len / spb;
+    const double patLen = juce::jmax (1, pat.length) / (double) kStepsPerBeat;
+    const long long r0 = (long long) std::floor ((b0 - origin) / patLen) - 1;
+    const long long r1 = (long long) std::floor ((b1 - origin) / patLen) + 1;
+    const double stepLen = 1.0 / kStepsPerBeat;
+    const double swingDelay = ((snap.swing / 100.0) * 2.0 - 1.0) * stepLen;
+    for (long long r = r0; r <= r1; ++r)
+    {
+        const double base = origin + (double) r * patLen;
+        for (auto& n : pat.notes)
+        {
+            double nb = base + n.start;
+            if (nb >= b1 + stepLen) break;   // notas ordenadas (com folga para o swing)
+            // swing igual ao dos pads: notas nas semicolcheias "fracas" atrasam um pouco
+            const double st = n.start / stepLen;
+            const double stR = std::round (st);
+            if (swingDelay != 0.0 && std::abs (st - stR) < 0.02 && ((long long) stR & 1)) nb += swingDelay;
+            if (nb < b0 || nb >= b1) continue;
+            if (nb < clipStart - 1.0e-9 || nb >= clipEnd - 1.0e-9) continue;
+            const int o = off + juce::jlimit (0, len - 1, (int) std::floor ((nb - b0) * spb));
+            // a nota termina no fim dela ou do clipe; nunca passa do fim do padrao + 1 compasso
+            const double endBeat = juce::jmin (nb + n.length, clipEnd);
+            const int gate = juce::jmax (1, (int) ((endBeat - nb) * spb));
+            noteOn (snap, n.channel, n.pitch, n.vel, slot, o, gate, false);
+        }
+    }
+}
+
+void Renderer::renderNoteVoices (const Snapshot& snap, int n)
+{
+    const int maxSlot = bus.getNumChannels() / 2;
+    juce::uint64 lo = 0, hi = 0;
+    for (auto& v : noteVoices)
+    {
+        if (! v.active) continue;
+        const int slot = juce::jlimit (0, maxSlot - 1, v.slot);
+        float* L = bus.getWritePointer (slot * 2);
+        float* R = bus.getWritePointer (slot * 2 + 1);
+        busUsed[slot] = true;
+        const int start = juce::jmin (n, v.delay);
+        const bool loops = v.loopStart >= 0 && v.loopEnd > v.loopStart + 64;
+        for (int i = start; i < n; ++i)
+        {
+            if (v.gateRemaining >= 0)
+            {
+                if (v.gateRemaining == 0) { v.stage = 2; v.gateRemaining = -1; }
+                else --v.gateRemaining;
+            }
+            if (loops && v.stage != 2 && v.pos >= v.loopEnd) v.pos -= (v.loopEnd - v.loopStart);
+            else if (loops && v.stage == 2 && v.pos >= v.loopEnd) v.pos -= (v.loopEnd - v.loopStart);   // continua no loop durante o release
+            if (v.pos >= v.zoneEnd - 2) { v.active = false; break; }
+            if (v.stage == 0)
+            {
+                v.env += v.attackInc;
+                if (v.env >= 1.0f) { v.env = 1.0f; v.stage = 1; }
+            }
+            else if (v.stage == 2)
+            {
+                v.env *= v.releaseCoef;
+                if (v.env < 1.0e-4f) { v.active = false; break; }
+            }
+            const int i0 = (int) v.pos;
+            const float f = (float) (v.pos - i0);
+            // interpolacao linear dentro da zona (o multisample ja e da mesma taxa: ratio ~1)
+            const float s0 = v.d0[i0] + (v.d0[i0 + 1] - v.d0[i0]) * f;
+            const float s1 = v.d1[i0] + (v.d1[i0 + 1] - v.d1[i0]) * f;
+            L[i] += s0 * v.env * v.gL;
+            R[i] += s1 * v.env * v.gR;
+            v.pos += v.inc;
+        }
+        v.delay = juce::jmax (0, v.delay - n);
+        if (! v.active) { v.multi.reset(); continue; }
+        if (v.channel == snap.currentChannel && v.stage != 2 && v.delay == 0)
+        {
+            if (v.pitch < 64) lo |= (1ull << v.pitch); else if (v.pitch < 128) hi |= (1ull << (v.pitch - 64));
+        }
+    }
+    soundingLo = lo;
+    soundingHi = hi;
 }
 
 float Renderer::evalAuto (const std::vector<AutoPoint>& pts, double beat, float def)
@@ -279,6 +466,7 @@ void Renderer::renderChunk (const Snapshot& snap, float* L, float* R, int n)
     }
 
     renderVoices (n);
+    renderNoteVoices (snap, n);
 
     juce::FloatVectorOperations::clear (L, n);
     juce::FloatVectorOperations::clear (R, n);
@@ -299,6 +487,7 @@ void Renderer::scheduleSegment (const Snapshot& snap, int off, int len, double b
         {
             const auto& pat = snap.patterns[(size_t) juce::jlimit (0, (int) snap.patterns.size() - 1, snap.currentPatternIndex)];
             triggerPatternSteps (snap, pat, snap.liveTrackSlot, 0.0, -1.0e9, 1.0e9, off, len, b0);
+            triggerPatternNotes (snap, pat, snap.liveTrackSlot, 0.0, -1.0e9, 1.0e9, off, len, b0);
         }
     }
     else
@@ -309,8 +498,12 @@ void Renderer::scheduleSegment (const Snapshot& snap, int off, int len, double b
             if (c.isPattern)
             {
                 if (c.patternIndex >= 0 && c.patternIndex < (int) snap.patterns.size())
+                {
                     triggerPatternSteps (snap, snap.patterns[(size_t) c.patternIndex], c.trackSlot,
                                          c.startBeat - c.patternOffsetBeats, c.startBeat, c.endBeat, off, len, b0);
+                    triggerPatternNotes (snap, snap.patterns[(size_t) c.patternIndex], c.trackSlot,
+                                         c.startBeat - c.patternOffsetBeats, c.startBeat, c.endBeat, off, len, b0);
+                }
             }
             else
                 renderAudioClip (snap, c, off, len, b0);

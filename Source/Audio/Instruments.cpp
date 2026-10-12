@@ -10,18 +10,18 @@ namespace
     constexpr double twoPi = juce::MathConstants<double>::twoPi;
 
     const Info table[] = {
-        { Id::Piano,         "Piano",            3, false, 3.6f, 0xfff5f0e6 },
+        { Id::Piano,         "Piano",            3, false, 3.6f, 0xff7aa2ff },
         { Id::ElectricPiano, "Piano elétrico",   3, false, 3.2f, 0xffffb86b },
         { Id::Organ,         "Órgão",            3, true,  3.0f, 0xffd98c4a },
         { Id::SynthLead,     "Synth lead",       4, true,  2.6f, 0xff4fc3f7 },
         { Id::SynthPad,      "Synth pad",        3, true,  4.0f, 0xffb388ff },
         { Id::Pluck,         "Pluck",            4, false, 2.0f, 0xff6fdc8c },
         { Id::Bass808,       "Baixo 808",        1, false, 2.6f, 0xffff5c5c },
-        { Id::SynthBass,     "Baixo synth",      2, true,  1.8f, 0xffff8a3d },
+        { Id::SynthBass,     "Baixo synth",      2, true,  1.8f, 0xfff06292 },
         { Id::Strings,       "Cordas",           3, true,  4.0f, 0xffffd166 },
-        { Id::Brass,         "Metais",           3, true,  2.2f, 0xffffc94a },
+        { Id::Brass,         "Metais",           3, true,  2.2f, 0xffe0a030 },
         { Id::Bells,         "Sinos",            4, false, 4.0f, 0xff80deea },
-        { Id::Marimba,       "Marimba",          4, false, 1.6f, 0xffbcaaa4 },
+        { Id::Marimba,       "Marimba",          4, false, 1.6f, 0xffa1887f },
     };
 
     double mtof (double m) { return 440.0 * std::pow (2.0, (m - 69.0) / 12.0); }
@@ -119,15 +119,21 @@ namespace
             {
                 const double det = (s == 0 ? -0.7 : 0.7) * fp / 1731.0;   // ~0,7 cent
                 const double w = twoPi * (fp + det) / sr;
-                double ph = p * 0.37 + s;
+                const double ph = p * 0.37 + s;
                 float* dst = s == 0 ? L : R;
                 const double kFast = std::exp (-1.0 / (sr * T * 0.22)), kSlow = std::exp (-1.0 / (sr * T));
                 double eF = 0.72 * amp, eS = 0.28 * amp;
+                // oscilador por rotacao (sem std::sin por amostra): mesmo som, ~10x mais rapido
+                const double cw = std::cos (w), sw = std::sin (w);
+                double x = std::cos (ph), y = std::sin (ph);
                 for (int i = 0; i < n; ++i)
                 {
-                    dst[i] += (float) ((eF + eS) * std::sin (ph));
-                    ph += w;
+                    dst[i] += (float) ((eF + eS) * y);
+                    const double nx = x * cw - y * sw;
+                    y = x * sw + y * cw;
+                    x = nx;
                     eF *= kFast; eS *= kSlow;
+                    if (eF + eS < 1.0e-6) break;   // parcial ja sumiu
                 }
             }
         }
@@ -167,7 +173,7 @@ namespace
         }
     }
 
-    void organ (juce::AudioBuffer<float>& out, int midi, double sr, double noteLen)
+    void organ (juce::AudioBuffer<float>& out, int midi, double sr, double releaseAt)
     {
         const int n = out.getNumSamples();
         auto* L = out.getWritePointer (0); auto* R = out.getWritePointer (1);
@@ -187,7 +193,7 @@ namespace
                 ph[k] += twoPi * f0 * ratios[k] * vib / sr;
             }
             v += 0.35 * std::sin (ph[1] * 3.0) * std::exp (-t / 0.18);           // percussao
-            const double env = adsr (t, 0.004, 0.05, 0.92, noteLen - 0.25, 0.2);
+            const double env = adsr (t, 0.004, 0.05, 0.92, releaseAt, 0.2);
             const double pan = 0.18 * std::sin (twoPi * 0.8 * t);                 // leslie lento
             v *= env * 0.28;
             L[i] = (float) (v * (1.0 + pan));
@@ -400,18 +406,19 @@ juce::String noteName (int midi)
     return juce::String (names[((midi % 12) + 12) % 12]) + juce::String (midi / 12 - 1);
 }
 
-juce::AudioBuffer<float> renderNote (Id id, int midi, double sr)
+juce::AudioBuffer<float> renderNote (Id id, int midi, double sr, double seconds, bool hold)
 {
     const auto& in = info (id);
-    const double len = in.noteSeconds;
+    const double len = seconds > 0 ? seconds : in.noteSeconds;
     juce::AudioBuffer<float> b (2, (int) (len * sr));
     b.clear();
-    const double rel = len - 0.35;   // a nota "solta" perto do fim (modo Gate tem o proprio release no pad)
+    // hold = nota sustentada sem release (o loop/release fica por conta do motor); senao "solta" perto do fim
+    const double rel = hold ? 1.0e9 : len - 0.35;
     switch (id)
     {
         case Id::Piano:         piano (b, midi, sr); break;
         case Id::ElectricPiano: electricPiano (b, midi, sr); break;
-        case Id::Organ:         organ (b, midi, sr, len); break;
+        case Id::Organ:         organ (b, midi, sr, rel); break;
         case Id::SynthLead:
             sawStack (b, midi, sr, 7, 22.0, 0.004, 0.35, 0.75, rel, 0.25,
                       [] (double t, double f0) { return f0 * 5.0 + f0 * 18.0 * std::exp (-t / 0.25) + 900.0; }, 0.9, 0.18, 11u);
@@ -438,7 +445,8 @@ juce::AudioBuffer<float> renderNote (Id id, int midi, double sr)
         case Id::Marimba:       marimba (b, midi, sr); break;
         default: break;
     }
-    fadeEdges (b, sr, in.sustained ? 0.03 : 0.25);
+    if (! hold) fadeEdges (b, sr, in.sustained ? 0.03 : 0.25);
+    else fadeEdges (b, sr, 0.0);
     return b;
 }
 
@@ -467,7 +475,7 @@ bool renderToFile (Id id, const std::vector<int>& notes, const juce::File& folde
     all.clear();
     for (size_t i = 0; i < notes.size(); ++i)
     {
-        auto b = renderNote (id, notes[i], sr);
+        auto b = renderNote (id, notes[i], sr, -1.0, false);
         const int start = (int) (i * slot * sr);
         const int len = juce::jmin (b.getNumSamples(), all.getNumSamples() - start);
         for (int c = 0; c < 2; ++c) all.copyFrom (c, start, b, c, 0, len);
@@ -487,6 +495,145 @@ bool renderToFile (Id id, const std::vector<int>& notes, const juce::File& folde
     }
     out.file.deleteFile();
     return tmp.moveFileTo (out.file);
+}
+
+// ============================================================================
+//  Multisample para a aba Instrumentos: uma nota a cada 3 semitons em todo o
+//  teclado. Instrumentos sustentados ganham um trecho em loop com crossfade
+//  (a nota segura pelo tempo que for preciso).
+// ============================================================================
+namespace
+{
+    constexpr int kFirstRoot = 24, kLastRoot = 102, kRootStep = 3;
+    constexpr double kMultiSR = 44100.0;
+
+    double zoneSeconds (const Info& in) { return in.sustained ? 2.6 : juce::jmax (1.6, (double) in.noteSeconds); }
+}
+
+bool isMono (Id id) { return id == Id::Bass808 || id == Id::SynthBass; }
+
+MultiPtr renderMulti (Id id, std::function<bool (float)> progress)
+{
+    const auto& in = info (id);
+    auto ms = std::make_shared<MultiSample>();
+    ms->sampleRate = kMultiSR;
+    ms->sustained = in.sustained;
+    const double secs = zoneSeconds (in);
+    const int zoneLen = (int) (secs * kMultiSR);
+    const int gap = (int) (0.02 * kMultiSR);
+    std::vector<int> roots;
+    for (int r = kFirstRoot; r <= kLastRoot; r += kRootStep) roots.push_back (r);
+    auto buf = std::make_shared<juce::AudioBuffer<float>> (2, (int) roots.size() * (zoneLen + gap));
+    buf->clear();
+
+    // as notas sao independentes: renderiza em paralelo (piano = ~25 notas)
+    std::vector<juce::AudioBuffer<float>> rendered (roots.size());
+    std::atomic<int> next { 0 }, done { 0 };
+    std::atomic<bool> cancel { false };
+    const int nThreads = juce::jlimit (1, 8, juce::SystemStats::getNumCpus());
+    std::vector<std::thread> workers;
+    for (int t = 0; t < nThreads; ++t)
+        workers.emplace_back ([&]
+        {
+            for (;;)
+            {
+                const int k = next.fetch_add (1);
+                if (k >= (int) roots.size() || cancel.load()) return;
+                rendered[(size_t) k] = renderNote (id, roots[(size_t) k], kMultiSR, secs, in.sustained);
+                done.fetch_add (1);
+            }
+        });
+    while (done.load() < (int) roots.size() && ! cancel.load())
+    {
+        if (progress && ! progress ((float) done.load() / (float) roots.size())) cancel = true;
+        std::this_thread::sleep_for (std::chrono::milliseconds (20));
+    }
+    for (auto& w : workers) w.join();
+    if (cancel) return nullptr;
+
+    for (size_t k = 0; k < roots.size(); ++k)
+    {
+        auto& b = rendered[k];
+        MultiSample::Zone z;
+        z.root = roots[k];
+        z.start = (int) k * (zoneLen + gap);
+        z.end = z.start + juce::jmin (zoneLen, b.getNumSamples());
+        for (int c = 0; c < 2; ++c) buf->copyFrom (c, z.start, b, c, 0, z.end - z.start);
+        if (in.sustained)
+        {
+            // loop de [1,0 s, fim - 0,1 s) com crossfade de 0,45 s embutido: o fim do loop
+            // emenda no comeco sem estalo
+            const int ls = (int) (1.0 * kMultiSR), le = (z.end - z.start) - (int) (0.1 * kMultiSR);
+            const int xf = juce::jmin ((int) (0.45 * kMultiSR), ls);
+            for (int c = 0; c < 2; ++c)
+            {
+                auto* d = buf->getWritePointer (c, z.start);
+                for (int i = 0; i < xf; ++i)
+                {
+                    const float t = (float) i / (float) xf;   // 0 -> 1 ao longo do crossfade
+                    const float a = std::cos (t * juce::MathConstants<float>::halfPi), bb = std::sin (t * juce::MathConstants<float>::halfPi);
+                    d[le - xf + i] = d[le - xf + i] * a + d[ls - xf + i] * bb;
+                }
+            }
+            z.loopStart = z.start + ls;
+            z.loopEnd = z.start + le;
+        }
+        ms->zones.push_back (z);
+    }
+    // volume parecido entre instrumentos: pico em -3 dB (sobra para acordes)
+    const float peak = buf->getMagnitude (0, buf->getNumSamples());
+    if (peak > 0.0f) buf->applyGain (0.7f / peak);
+    ms->buffer = buf;
+    return ms;
+}
+
+const MultiSample::Zone* MultiSample::zoneFor (int pitch) const
+{
+    const Zone* best = nullptr;
+    for (auto& z : zones)
+        if (best == nullptr || std::abs (z.root - pitch) < std::abs (best->root - pitch)) best = &z;
+    return best;
+}
+
+// ---------------------------------------------------------------- banco (cache)
+InstrumentBank::InstrumentBank() : pool (2) {}
+InstrumentBank::~InstrumentBank() { *alive = false; pool.removeAllJobs (true, 20000); }
+
+MultiPtr InstrumentBank::get (Id id) const
+{
+    const juce::ScopedLock sl (lock);
+    auto it = loaded.find ((int) id);
+    return it != loaded.end() ? it->second : nullptr;
+}
+
+bool InstrumentBank::isLoading (Id id) const
+{
+    const juce::ScopedLock sl (lock);
+    return pending.count ((int) id) > 0;
+}
+
+void InstrumentBank::request (Id id)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        if (loaded.count ((int) id) || pending.count ((int) id)) return;
+        pending.insert ((int) id);
+    }
+    auto a = alive;
+    pool.addJob ([this, a, id]
+    {
+        auto ms = renderMulti (id, [a] (float) { return a->load(); });
+        if (! a->load()) return;
+        {
+            const juce::ScopedLock sl (lock);
+            pending.erase ((int) id);
+            if (ms) loaded[(int) id] = ms;
+        }
+        juce::MessageManager::callAsync ([this, a, id]
+        {
+            if (a->load() && onLoaded) onLoaded (id);
+        });
+    });
 }
 
 } // namespace instruments

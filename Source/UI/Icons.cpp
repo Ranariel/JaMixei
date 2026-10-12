@@ -234,6 +234,12 @@ namespace
             case Icon::ChevronRight: b.poly ({ { 9.5f, 6.0f }, { 15.5f, 12.0f }, { 9.5f, 18.0f } }); break;
             case Icon::ChevronDown:  b.poly ({ { 6.0f, 9.5f }, { 12.0f, 15.5f }, { 18.0f, 9.5f } }); break;
             case Icon::Check:        b.poly ({ { 5.0f, 12.5f }, { 10.0f, 17.5f }, { 19.0f, 7.0f } }); break;
+            case Icon::Piano:
+                b.rrect (3.5f, 5.0f, 17.0f, 14.0f, 2.0f);
+                b.line (9.0f, 13.0f, 9.0f, 19.0f); b.line (15.0f, 13.0f, 15.0f, 19.0f);
+                b.rrect (7.6f, 5.0f, 2.8f, 8.0f, 0.6f, true);
+                b.rrect (13.6f, 5.0f, 2.8f, 8.0f, 0.6f, true);
+                break;
             case Icon::Bolt:
                 b.filledRound ({ { 13.0f, 3.0f }, { 5.5f, 13.5f }, { 11.5f, 13.5f }, { 10.5f, 21.0f }, { 18.5f, 10.0f }, { 12.5f, 10.0f } }, 0.7f);
                 break;

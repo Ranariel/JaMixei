@@ -21,6 +21,8 @@ Session::Session()
 
     std::unique_ptr<juce::XmlElement> devState (props.getUserSettings()->getXmlValue ("audioDevice"));
     engine.initialise (devState.get());
+    engine.enableAllMidiInputs();
+    bank.onLoaded = [this] (instruments::Id) { rebuildSnapshot(); notify (kChPatterns); };
     rebuildSnapshot();
     startTimerHz (30);
 }
@@ -43,7 +45,8 @@ void Session::notify (int what)
 
 SnapshotPtr Session::buildSnapshot (double sampleRate)
 {
-    return SnapshotBuilder::build (project, sources, stretch.get(), padCache, sampleRate);
+    for (auto& c : project.channels) bank.request ((instruments::Id) c.instrument);   // gera em segundo plano
+    return SnapshotBuilder::build (project, sources, stretch.get(), padCache, sampleRate, &bank);
 }
 
 void Session::rebuildSnapshot()
@@ -470,6 +473,121 @@ void Session::loadInstrument (int instrument, int rootMidi, int scale, int bank,
     });
 }
 
+// ---------------------------------------------------------------------------
+//  Instrumentos
+// ---------------------------------------------------------------------------
+float Session::defaultRelease (int instrument)
+{
+    using namespace instruments;
+    switch ((Id) instrument)
+    {
+        case Id::Piano: case Id::ElectricPiano: return 320.0f;
+        case Id::Organ:     return 90.0f;
+        case Id::SynthLead: return 160.0f;
+        case Id::SynthPad:  return 700.0f;
+        case Id::Pluck:     return 450.0f;
+        case Id::Bass808:   return 250.0f;
+        case Id::SynthBass: return 90.0f;
+        case Id::Strings:   return 550.0f;
+        case Id::Brass:     return 180.0f;
+        case Id::Bells:     return 1500.0f;
+        case Id::Marimba:   return 700.0f;
+        default: break;
+    }
+    return 250.0f;
+}
+
+int Session::addChannel (int instrument)
+{
+    using namespace instruments;
+    instrument = juce::jlimit (0, (int) Id::count - 1, instrument);
+    beginEdit (TR ("Adicionar instrumento"));
+    auto name = displayName ((Id) instrument);
+    int same = 0;
+    for (auto& c : project.channels) if (c.instrument == instrument) ++same;
+    if (same > 0) name << " " << (same + 1);
+    auto& c = project.addChannel (instrument, name);
+    c.colour = juce::Colour (info ((Id) instrument).colour);
+    c.releaseMs = defaultRelease (instrument);
+    project.currentChannelId = c.id;
+    const int id = c.id;
+    bank.request ((Id) instrument);
+    commit (kChPatterns);
+    return id;
+}
+
+void Session::removeChannel (int channelId)
+{
+    if (project.findChannel (channelId) == nullptr) return;
+    beginEdit (TR ("Remover instrumento"));
+    for (auto& p : project.patterns)
+        p.notes.erase (std::remove_if (p.notes.begin(), p.notes.end(), [channelId] (const Note& n) { return n.channelId == channelId; }), p.notes.end());
+    project.channels.erase (std::remove_if (project.channels.begin(), project.channels.end(),
+                                            [channelId] (const InstrumentChannel& c) { return c.id == channelId; }), project.channels.end());
+    if (project.findChannel (project.currentChannelId) == nullptr)
+        project.currentChannelId = project.channels.empty() ? -1 : project.channels.front().id;
+    commit (kChPatterns);
+}
+
+void Session::setChannelInstrument (int channelId, int instrument)
+{
+    auto* c = project.findChannel (channelId);
+    if (c == nullptr || c->instrument == instrument) return;
+    beginEdit (TR ("Trocar instrumento"));
+    const bool autoName = c->name.startsWith (instruments::displayName ((instruments::Id) c->instrument));
+    c->instrument = instrument;
+    c->colour = juce::Colour (instruments::info ((instruments::Id) instrument).colour);
+    c->releaseMs = defaultRelease (instrument);
+    if (autoName) c->name = instruments::displayName ((instruments::Id) instrument);
+    commit (kChPatterns);
+}
+
+void Session::selectChannel (int channelId)
+{
+    if (project.currentChannelId == channelId || project.findChannel (channelId) == nullptr) return;
+    project.currentChannelId = channelId;
+    rebuildSnapshot();
+    notify (kChPatterns | kChSelection);
+}
+
+void Session::noteDown (int pitch, uint8_t vel)
+{
+    if (project.channels.empty()) addChannel ((int) instruments::Id::Piano);
+    engine.noteDown (pitch, vel);
+}
+
+void Session::noteUp (int pitch) { engine.noteUp (pitch); }
+
+void Session::finishRecordedNote (const RecordedNote& on, double endAbs)
+{
+    auto* p = project.findPattern (on.patternId);
+    if (p == nullptr || project.findChannel (on.channelId) == nullptr) return;
+    const double patLen = p->lengthBeats();
+    double len = endAbs - on.absBeat;
+    if (len <= 0) len += patLen;                       // o padrao deu a volta (modo PADRAO)
+    len = juce::jlimit (1.0 / 32.0, patLen, len);
+    double start = on.beat;
+    if (noteQuantize > 0)
+    {
+        start = std::round (start / noteQuantize) * noteQuantize;
+        len = juce::jmax (noteQuantize * 0.5, std::round (len / noteQuantize) * noteQuantize);
+        if (start >= patLen - 1.0e-9) start = 0;    // arredondou para o fim: volta ao inicio do padrao
+    }
+    if (! recordUndoPushed) { beginEdit (TR ("Gravar notas")); recordUndoPushed = true; }
+    // grava por cima: tira uma nota igual que comece no mesmo lugar
+    p->notes.erase (std::remove_if (p->notes.begin(), p->notes.end(), [&] (const Note& n)
+    {
+        return n.channelId == on.channelId && n.pitch == on.pitch && std::abs (n.start - start) < 1.0e-6;
+    }), p->notes.end());
+    Note n;
+    n.channelId = on.channelId;
+    n.pitch = on.pitch;
+    n.start = start;
+    n.length = len;
+    n.vel = on.vel;
+    p->notes.push_back (n);
+}
+
 void Session::clearPad (int pad)
 {
     if (! juce::isPositiveAndBelow (pad, kNumPads)) return;
@@ -535,6 +653,26 @@ int Session::newPattern (bool duplicateCurrent)
     return p.id;
 }
 
+void Session::setPatternLength (int steps)
+{
+    auto* p = currentPattern();
+    steps = juce::jlimit (1, kMaxSteps, steps);
+    if (p == nullptr || steps == p->lengthSteps) return;
+    beginEdit (TR ("Tamanho do padrão"));
+    const int old = p->lengthSteps;
+    const double oldBeats = p->lengthBeats();
+    if (steps > old)
+        for (int pad = 0; pad < kNumPads; ++pad)
+            for (int st = old; st < steps; ++st) p->set (pad, st, p->get (pad, st % old));
+    p->lengthSteps = steps;
+    // clipes que mostravam o padrao inteiro acompanham o novo tamanho
+    for (auto& c : project.clips)
+        if (c.kind == ClipKind::Pattern && c.patternId == p->id && c.patternOffsetBeats == 0
+            && std::abs (c.lengthBeatsPattern - oldBeats) < 1e-6)
+            c.lengthBeatsPattern = p->lengthBeats();
+    commit (kChPatterns | kChClips);
+}
+
 void Session::deletePattern (int id)
 {
     if (project.patterns.size() <= 1) { setStatus (TR ("O projeto precisa de pelo menos um padrão")); return; }
@@ -588,7 +726,7 @@ void Session::toggleRecord()
     }
     engine.setRecording (recording);
     if (recording && ! engine.isPlaying()) engine.play();
-    setStatus (recording ? TR ("Gravando pads: toque os pads no ritmo (quantizado em 1/16)") : TR ("Gravação parada"));
+    setStatus (recording ? TR ("Gravando: toque os pads ou o teclado no ritmo (quantizado)") : TR ("Gravação parada"));
     notify (kChTransport);
 }
 
@@ -826,14 +964,22 @@ bool Session::renderToFile (const ExportSettings& es, std::function<bool (float)
     auto s = std::make_shared<Snapshot> (*snap);
     s->loopOn = false;
     s->metronome = false;
-    const double startBeat = es.onlyLoop ? project.loopStart : 0.0;
-    const double endBeat = es.onlyLoop ? project.loopEnd : s->songEndBeat;
-    if (endBeat <= startBeat + 0.01) { error = TR ("Nada para exportar (o arranjo esta vazio)"); return false; }
+    const bool patternExport = es.patternRepeats > 0;
+    double patBeats = 4.0;
+    if (auto* cp = currentPattern()) patBeats = cp->lengthBeats();
+    const double startBeat = patternExport ? 0.0 : es.onlyLoop ? project.loopStart : 0.0;
+    const double endBeat = patternExport ? patBeats * es.patternRepeats : es.onlyLoop ? project.loopEnd : s->songEndBeat;
+    if (endBeat <= startBeat + 0.01)
+    {
+        error = TR ("Nada para exportar (o arranjo esta vazio). Dica: escolha \"Padrão atual\" em Trecho para exportar o beat do modo PADRÃO.");
+        return false;
+    }
 
     auto renderer = std::make_unique<Renderer>();
     renderer->prepare (es.sampleRate, 4096);
     renderer->posBeats = startBeat;
     renderer->playing = true;
+    renderer->patternMode = patternExport;
     const juce::int64 bodySamples = (juce::int64) std::ceil ((endBeat - startBeat) * s->samplesPerBeat());
     const juce::int64 total = bodySamples + (juce::int64) (es.tailSeconds * es.sampleRate);
 
@@ -919,7 +1065,34 @@ void Session::timerCallback()
         p->set (h.pad, h.step, h.vel);
         any = true;
     }
+    // notas tocadas no teclado durante a gravacao -> piano roll
+    RecordedNote rn;
+    while (engine.getRenderer().recordedNotes.pop (rn))
+    {
+        const auto key = std::make_pair (rn.channelId, rn.pitch);
+        if (rn.on) pendingNotes[key] = rn;
+        else if (auto it = pendingNotes.find (key); it != pendingNotes.end())
+        {
+            finishRecordedNote (it->second, rn.absBeat);
+            pendingNotes.erase (it);
+            any = true;
+        }
+    }
+    if (! pendingNotes.empty() && ! engine.isPlaying())
+    {
+        // parou com a tecla ainda apertada: fecha as notas com a duracao da grade
+        for (auto& [k, on] : pendingNotes) finishRecordedNote (on, on.absBeat + juce::jmax (0.25, noteQuantize));
+        pendingNotes.clear();
+        any = true;
+    }
     if (any) commit (kChPatterns);
+
+    // controladores MIDI conectados depois de abrir o programa
+    if (--midiScanCountdown <= 0)
+    {
+        midiScanCountdown = 90;   // ~3 s
+        engine.enableAllMidiInputs();
+    }
 
     if (status.isNotEmpty() && juce::Time::getMillisecondCounter() - statusTime > 9000) status.clear();
 

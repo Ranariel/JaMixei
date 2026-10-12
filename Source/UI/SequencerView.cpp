@@ -178,22 +178,7 @@ SequencerView::SequencerView (Session& s) : session (s)
     lengthBox.addItemList ({ TR ("1 compasso (16 passos)"), TR ("2 compassos (32)"), TR ("3 compassos (48)"), TR ("4 compassos (64)") }, 1);
     lengthBox.onChange = [this]
     {
-        if (auto* p = session.currentPattern())
-        {
-            const int steps = lengthBox.getSelectedId() * 16;
-            if (steps == p->lengthSteps) return;
-            session.beginEdit (TR ("Tamanho do padrão"));
-            // ao aumentar, repete o conteudo existente
-            const int old = p->lengthSteps;
-            if (steps > old)
-                for (int pad = 0; pad < kNumPads; ++pad)
-                    for (int st = old; st < steps; ++st) p->set (pad, st, p->get (pad, st % old));
-            p->lengthSteps = steps;
-            for (auto& c : session.project.clips)
-                if (c.kind == ClipKind::Pattern && c.patternId == p->id && std::abs (c.lengthBeatsPattern - old / 4.0) < 1e-6)
-                    c.lengthBeatsPattern = p->lengthBeats();
-            session.commit (kChPatterns | kChClips);
-        }
+        session.setPatternLength (lengthBox.getSelectedId() * 16);
     };
     velBox.addItemList ({ TR ("Clique: normal (100)"), TR ("Clique: forte (127)"), TR ("Clique: fraco (60)") }, 1);
     velBox.setSelectedId (1, juce::dontSendNotification);

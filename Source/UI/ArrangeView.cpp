@@ -653,6 +653,28 @@ public:
                             g.fillRect (x + 0.5f, body.getY() + 2 + rowH * (float) u, juce::jmax (1.5f, (float) stepPx - 1.0f), juce::jmax (1.5f, rowH - 1.0f) * (0.4f + 0.6f * v / 127.0f));
                 }
             }
+            // notas dos instrumentos (mini piano roll)
+            if (! pat->notes.empty())
+            {
+                int lo = 127, hi = 0;
+                for (auto& n : pat->notes) { lo = juce::jmin (lo, n.pitch); hi = juce::jmax (hi, n.pitch); }
+                const float top = body.getY() + (used.empty() ? 3.0f : body.getHeight() * 0.45f);
+                const float h = body.getBottom() - 3.0f - top;
+                const float rowH = juce::jlimit (1.5f, 5.0f, h / (float) juce::jmax (1, hi - lo + 1));
+                const double plen2 = pat->lengthBeats();
+                g.setColour (col.brighter (0.75f));
+                for (double rep = -std::fmod (c.patternOffsetBeats, plen2); rep < c.lengthBeatsPattern - 1e-6; rep += plen2)
+                    for (auto& n : pat->notes)
+                    {
+                        const double b0 = rep + n.start, b1 = juce::jmin (c.lengthBeatsPattern, b0 + n.length);
+                        if (b1 <= 0 || b0 >= c.lengthBeatsPattern) continue;
+                        const float x0 = r.getX() + (float) (juce::jmax (0.0, b0) * owner.pxPerBeat);
+                        const float x1 = r.getX() + (float) (b1 * owner.pxPerBeat);
+                        if (x1 < 0 || x0 > getWidth()) continue;
+                        const float y = hi == lo ? top + h * 0.5f : top + (h - rowH) * (float) (hi - n.pitch) / (float) (hi - lo);
+                        g.fillRect (x0, y, juce::jmax (1.5f, x1 - x0 - 1.0f), rowH);
+                    }
+            }
             // divisorias de repeticao
             g.setColour (juce::Colours::black.withAlpha (0.35f));
             const double plen = pat->lengthBeats();

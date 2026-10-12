@@ -7,7 +7,7 @@ namespace mp
 // ============================================================================
 //  AudioEngine: dispositivo de audio + ponte thread-safe com o Renderer
 // ============================================================================
-class AudioEngine : public juce::AudioIODeviceCallback
+class AudioEngine : public juce::AudioIODeviceCallback, private juce::MidiInputCallback
 {
 public:
     AudioEngine();
@@ -34,6 +34,18 @@ public:
     void padDown (int pad, uint8_t vel = 120) { padEvents.push ({ pad, vel, true }); }
     void padUp (int pad) { padEvents.push ({ pad, 0, false }); }
     void panic() { panicReq = true; }
+
+    // --- instrumentos ao vivo (teclado da tela / PC) ---
+    void noteDown (int pitch, uint8_t vel = 100, int channel = -1) { noteEvents.push ({ channel, pitch, vel, true }); }
+    void noteUp (int pitch, int channel = -1) { noteEvents.push ({ channel, pitch, 0, false }); }
+    juce::uint64 soundingLo() const { return renderer.soundingLo.load(); }
+    juce::uint64 soundingHi() const { return renderer.soundingHi.load(); }
+
+    // --- controladores MIDI (teclado, controlador de pads) ---
+    void enableAllMidiInputs();                    // liga os dispositivos MIDI conectados (chamar de tempos em tempos)
+    juce::StringArray midiInputNames() const;
+    std::atomic<bool> midiToInstrument { false };  // true: notas MIDI tocam o instrumento; false: tocam os pads
+    std::atomic<int> midiActivity { 0 };
 
     // --- pre-escuta ---
     void previewBuffer (BufferPtr buf, double sr, double startSec, double endSec, bool loop = false, double loopStartSec = -1);
@@ -73,6 +85,7 @@ public:
                                            int numSamples, const juce::AudioIODeviceCallbackContext&) override;
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
+    void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m) override;
 
 private:
     juce::AudioDeviceManager deviceManager;
@@ -83,6 +96,13 @@ private:
     SnapshotPtr current;
 
     SpscQueue<PadEvent, 1024> padEvents;
+    SpscQueue<NoteEvent, 1024> noteEvents;            // UI -> audio
+    SpscQueue<NoteEvent, 1024> midiNoteEvents;        // thread MIDI -> audio
+    SpscQueue<PadEvent, 1024> midiPadEvents;          // thread MIDI -> audio
+    std::atomic<bool> sustainPedal { false };
+    bool sustainApplied = false;
+    std::array<bool, 128> heldBySustain {};
+    juce::StringArray enabledMidi;
     std::atomic<int> playReq { -1 };
     std::atomic<bool> seekReq { false };
     std::atomic<double> seekPos { 0.0 };

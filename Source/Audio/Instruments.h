@@ -1,5 +1,8 @@
 #pragma once
 #include <JuceHeader.h>
+#include <map>
+#include <set>
+#include <thread>
 
 namespace mp
 {
@@ -36,8 +39,40 @@ namespace instruments
     std::vector<int> scaleNotes (int rootMidi, Scale s, int count = 16);
     juce::String noteName (int midi);       // ex.: "C#3"
 
-    // gera um buffer estereo (44,1 kHz) de uma nota
-    juce::AudioBuffer<float> renderNote (Id id, int midi, double sampleRate);
+    // gera um buffer estereo de uma nota (seconds <= 0: duracao padrao; hold: sustenta sem release)
+    juce::AudioBuffer<float> renderNote (Id id, int midi, double sampleRate, double seconds = -1.0, bool hold = false);
+    bool isMono (Id id);       // baixos: uma nota por vez (legato)
+
+    // multisample usado pela aba Instrumentos (todo o teclado)
+    struct MultiSample
+    {
+        struct Zone { int root = 60; int start = 0, end = 0; int loopStart = -1, loopEnd = -1; };
+        std::shared_ptr<juce::AudioBuffer<float>> buffer;
+        double sampleRate = 44100;
+        bool sustained = false;
+        std::vector<Zone> zones;
+        const Zone* zoneFor (int pitch) const;
+    };
+    using MultiPtr = std::shared_ptr<const MultiSample>;
+    MultiPtr renderMulti (Id id, std::function<bool (float)> progress = {});
+
+    // gera os multisamples em segundo plano e guarda na memoria
+    class InstrumentBank
+    {
+    public:
+        InstrumentBank();
+        ~InstrumentBank();
+        MultiPtr get (Id id) const;          // nullptr enquanto nao estiver pronto
+        void request (Id id);                // comeca a gerar (se ainda nao existe)
+        bool isLoading (Id id) const;
+        std::function<void (Id)> onLoaded;   // thread de mensagens
+    private:
+        juce::CriticalSection lock;
+        std::map<int, MultiPtr> loaded;
+        std::set<int> pending;
+        juce::ThreadPool pool;
+        std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
+    };
 
     struct Rendered
     {

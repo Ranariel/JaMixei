@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include "../Model/Project.h"
 #include "SourcePool.h"
+#include "Instruments.h"
 #include <array>
 
 namespace mp
@@ -51,11 +52,30 @@ struct SnapPad
     float cutoff = 20000, resonance = 0.1f;
 };
 
+struct SnapNote
+{
+    int channel = 0;            // indice em Snapshot::channels
+    int pitch = 60;
+    double start = 0, length = 0.25;
+    uint8_t vel = 100;
+};
+
+struct SnapChannel
+{
+    int id = 0;
+    instruments::MultiPtr multi;    // nullptr enquanto o instrumento e gerado
+    float gainL = 1, gainR = 1;
+    float attackMs = 2, releaseMs = 250;
+    int transpose = 0;
+    bool mono = false;
+};
+
 struct SnapPattern
 {
     int id = 0;
     int length = 16;
     std::vector<uint8_t> vel;
+    std::vector<SnapNote> notes;    // ordenadas pelo inicio
     uint8_t get (int pad, int step) const { return vel[(size_t) pad * kMaxSteps + (size_t) step]; }
 };
 
@@ -79,6 +99,8 @@ struct Snapshot
     int currentPatternIndex = 0;
     int liveTrackSlot = 0;
     double songEndBeat = 0;
+    std::vector<SnapChannel> channels;
+    int currentChannel = -1;        // instrumento tocado ao vivo (teclado / MIDI)
     int pendingStretches = 0;
 
     double samplesPerBeat() const { return sampleRate * 60.0 / bpm; }
@@ -99,7 +121,8 @@ private:
 struct SnapshotBuilder
 {
     static SnapshotPtr build (const Project& p, SourcePool& sources, StretchCache* stretch,
-                              PadBufferCache& padCache, double sampleRate);
+                              PadBufferCache& padCache, double sampleRate,
+                              const instruments::InstrumentBank* bank = nullptr);
 };
 
 } // namespace mp

@@ -96,8 +96,8 @@ class MainComponent::TabBar : public juce::Component
 public:
     TabBar()
     {
-        names = { TR ("ARRANJO"), TR ("EDITOR / CHOP"), TR ("SEQUENCIADOR"), TR ("MIXER") };
-        icons = { Icon::Arrange, Icon::Scissors, Icon::Grid, Icon::Mixer };
+        names = { TR ("ARRANJO"), TR ("EDITOR / CHOP"), TR ("SEQUENCIADOR"), TR ("INSTRUMENTOS"), TR ("MIXER") };
+        icons = { Icon::Arrange, Icon::Scissors, Icon::Grid, Icon::Piano, Icon::Mixer };
         setRepaintsOnMouseActivity (true);
     }
     std::function<void (int)> onSelect;
@@ -111,7 +111,7 @@ public:
     float tabWidth (int i) const { return Theme::font (11.5f, true).getStringWidthFloat (names[(size_t) i]) + 52.0f; }
     int tabAt (juce::Point<int> p) const
     {
-        for (int i = 0; i < 4; ++i) if (tabRect (i).contains (p.toFloat())) return i;
+        for (int i = 0; i < names.size(); ++i) if (tabRect (i).contains (p.toFloat())) return i;
         return -1;
     }
     void paint (juce::Graphics& g) override
@@ -130,7 +130,7 @@ public:
         g.fillRoundedRectangle (pill.withTop (pill.getBottom() - 2.5f).reduced (10.0f, 0.0f), 1.25f);
 
         const int hover = isMouseOver() ? tabAt (getMouseXYRelative()) : -1;
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < names.size(); ++i)
         {
             auto r = tabRect (i);
             const bool act = i == current;
@@ -203,13 +203,14 @@ MainComponent::MainComponent (Session& s) : session (s)
     editor = std::make_unique<SampleEditor> (session);
     sequencer = std::make_unique<SequencerView> (session);
     mixer = std::make_unique<MixerView> (session);
+    instView = std::make_unique<InstrumentView> (session);
     pads = std::make_unique<PadPanel> (session);
     statusBar = std::make_unique<StatusBar> (session);
     leftDivider = std::make_unique<Divider> (true, [this] (int d) { browserWidth = juce::jlimit (0, 600, browserWidth + d); resized(); });
     bottomDivider = std::make_unique<Divider> (false, [this] (int d) { padHeight = juce::jlimit (0, 520, padHeight - d); resized(); });
 
     for (auto* c : std::initializer_list<juce::Component*> { transport.get(), browser.get(), arrange.get(), editor.get(), sequencer.get(),
-                                                              mixer.get(), pads.get(), statusBar.get(), leftDivider.get(), bottomDivider.get() })
+                                                              mixer.get(), pads.get(), statusBar.get(), leftDivider.get(), bottomDivider.get(), instView.get() })
         addAndMakeVisible (c);
 
     tabBar = std::make_unique<TabBar>();
@@ -221,7 +222,16 @@ MainComponent::MainComponent (Session& s) : session (s)
     pads->onOpenInEditor = openEditor;
     pads->onInstruments = [this] { showInstruments(); };
     browser->onOpenInEditor = openEditor;
-    arrange->onShowSequencer = [this] { showTab (2); };
+    arrange->onShowSequencer = [this]
+    {
+        // padrao so com notas de instrumento abre no piano roll
+        bool steps = false;
+        if (auto* p = session.currentPattern())
+            for (int pad = 0; pad < kNumPads && ! steps; ++pad)
+                for (int st = 0; st < p->lengthSteps; ++st) if (p->get (pad, st)) { steps = true; break; }
+        auto* p = session.currentPattern();
+        showTab (p != nullptr && ! p->notes.empty() && ! steps ? kInstrumentsTab : 2);
+    };
 
     transport->getMenu = [this] (int i) { return getMenu (i); };
     transport->onMenuItem = [this] (int m, int i) { menuItem (m, i); };
@@ -323,9 +333,16 @@ MainComponent::~MainComponent()
 void MainComponent::showTab (int index, bool animate)
 {
     const int prev = currentTab;
-    currentTab = juce::jlimit (0, 3, index);
-    juce::Component* views[] = { arrange.get(), editor.get(), sequencer.get(), mixer.get() };
-    for (int i = 0; i < 4; ++i) views[i]->setVisible (i == currentTab);
+    currentTab = juce::jlimit (0, kNumTabs - 1, index);
+    juce::Component* views[] = { arrange.get(), editor.get(), sequencer.get(), instView.get(), mixer.get() };
+    for (int i = 0; i < kNumTabs; ++i) views[i]->setVisible (i == currentTab);
+    // teclado MIDI: na aba Instrumentos toca o instrumento; nas outras, os pads
+    session.engine.midiToInstrument = currentTab == kInstrumentsTab;
+    if ((prev == kInstrumentsTab) != (currentTab == kInstrumentsTab))
+    {
+        releasePcNotes();
+        resized();   // a aba Instrumentos usa a tela inteira (sem navegador e pads)
+    }
     if (tabBar != nullptr) tabBar->setCurrent (currentTab);
     // transicao: a nova tela entra deslizando de leve e aparecendo (fade)
     auto* v = views[currentTab];
@@ -346,26 +363,29 @@ void MainComponent::resized()
     auto r = getLocalBounds();
     transport->setBounds (r.removeFromTop (TransportBar::preferredHeight));
     statusBar->setBounds (r.removeFromBottom (26));
+    const bool full = currentTab == kInstrumentsTab;
     const int ph = juce::jmin (padHeight, r.getHeight() - 250);
-    if (ph > 40)
+    if (ph > 40 && ! full)
     {
         pads->setVisible (true);
         pads->setBounds (r.removeFromBottom (ph));
     }
     else pads->setVisible (false);
-    bottomDivider->setBounds (r.removeFromBottom (5));
+    bottomDivider->setVisible (! full);
+    leftDivider->setVisible (! full);
+    if (! full) bottomDivider->setBounds (r.removeFromBottom (5));
     const int bw = juce::jmin (browserWidth, r.getWidth() / 2);
-    if (bw > 60)
+    if (bw > 60 && ! full)
     {
         browser->setVisible (true);
         browser->setBounds (r.removeFromLeft (bw));
     }
     else browser->setVisible (false);
-    leftDivider->setBounds (r.removeFromLeft (5));
+    if (! full) leftDivider->setBounds (r.removeFromLeft (5));
     tabBar->setBounds (r.removeFromTop (40));
     viewArea = r;
     auto& animator = juce::Desktop::getInstance().getAnimator();
-    for (auto* c : std::initializer_list<juce::Component*> { arrange.get(), editor.get(), sequencer.get(), mixer.get() })
+    for (auto* c : std::initializer_list<juce::Component*> { arrange.get(), editor.get(), sequencer.get(), mixer.get(), instView.get() })
     {
         animator.cancelAnimation (c, false);
         c->setAlpha (1.0f);
@@ -398,6 +418,17 @@ void MainComponent::focusLost (FocusChangeType)
     // solta pads presos se a janela perder o foco
     for (int i = 0; i < 16; ++i)
         if (padKeyDown[(size_t) i]) { padKeyDown[(size_t) i] = false; session.padUp (padKeyPad[(size_t) i]); }
+    releasePcNotes();
+}
+
+void MainComponent::releasePcNotes()
+{
+    for (auto& [code, pitch] : pcNoteKeys)
+    {
+        session.noteUp (pitch);
+        if (instView != nullptr) instView->setPcKeyHeld (pitch, false);
+    }
+    pcNoteKeys.clear();
 }
 
 void MainComponent::timerCallback()
@@ -430,6 +461,33 @@ bool MainComponent::keyStateChanged (bool)
     const auto mods = juce::ModifierKeys::getCurrentModifiersRealtime();
     const bool blocked = mods.isCommandDown() || mods.isAltDown() || mods.isCtrlDown();
     bool any = false;
+    if (currentTab == kInstrumentsTab)
+    {
+        // teclado do PC vira teclado de piano (estilo FL Studio)
+        static const int codes[] = { 'Z','S','X','D','C','V','G','B','H','N','J','M',',','L','.',
+                                     'Q','2','W','3','E','R','5','T','6','Y','7','U','I','9','O','0','P' };
+        for (int code : codes)
+        {
+            const bool down = juce::KeyPress::isKeyCurrentlyDown (code) && ! blocked;
+            auto it = pcNoteKeys.find (code);
+            if (down && it == pcNoteKeys.end())
+            {
+                const int pitch = juce::jlimit (0, 127, instView->pcBaseNote() + InstrumentView::pcKeySemitone (code));
+                pcNoteKeys[code] = pitch;
+                session.noteDown (pitch, 100);
+                instView->setPcKeyHeld (pitch, true);
+                any = true;
+            }
+            else if (! down && it != pcNoteKeys.end())
+            {
+                session.noteUp (it->second);
+                instView->setPcKeyHeld (it->second, false);
+                pcNoteKeys.erase (it);
+                any = true;
+            }
+        }
+        return any;
+    }
     for (int i = 0; i < 16; ++i)
     {
         const bool down = juce::KeyPress::isKeyCurrentlyDown (padKeyCode (i));
@@ -461,7 +519,16 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     juce::juce_wchar upper = (code > 0 && code < 128) ? juce::CharacterFunctions::toUpperCase ((juce::juce_wchar) code)
                                                       : juce::CharacterFunctions::toUpperCase (key.getTextCharacter());
 
-    if (! cmd && ! mods.isAltDown())
+    if (currentTab == kInstrumentsTab)
+    {
+        if (! cmd && ! mods.isAltDown() && (InstrumentView::pcKeySemitone ((int) upper) >= 0)) return true;   // tocado em keyStateChanged
+        if (! cmd && (upper == '-' || code == juce::KeyPress::pageDownKey)) { instView->shiftPcOctave (-1); return true; }
+        if (! cmd && (upper == '=' || upper == '+' || code == juce::KeyPress::pageUpKey)) { instView->shiftPcOctave (1); return true; }
+        if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) { instView->deleteSelectedNotes(); return true; }
+        if (cmd && upper == 'A') { instView->selectAllNotes(); return true; }
+        if (cmd && upper == 'D') { instView->duplicateSelectedNotes(); return true; }
+    }
+    else if (! cmd && ! mods.isAltDown())
         for (int i = 0; i < 16; ++i)
             if (code == padKeyCode (i) || upper == (juce::juce_wchar) padKeyCode (i)) return true;   // tratado em keyStateChanged
 
@@ -503,7 +570,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             case 'R': if (shift) audioRecordClicked(); else session.toggleRecord(); return true;
             case 'L': session.beginEdit (TR ("Loop")); session.project.loopOn = ! session.project.loopOn; session.commit (kChTransport); return true;
             case 'M': session.project.metronome = ! session.project.metronome; session.commit (kChTransport); return true;
-            case '1': case '2': case '3': case '4': showTab (upper - '1'); return true;
+            case '1': case '2': case '3': case '4': case '5': showTab (upper - '1'); return true;
             default: break;
         }
     }
@@ -750,6 +817,17 @@ void MainComponent::playPressed()
         return;
     }
     session.engine.stopPreview();
+    if (currentTab == kInstrumentsTab && session.songMode && ! session.engine.isPlaying() && ! session.isAudioRecording())
+    {
+        bool inSong = false;
+        for (auto& c : session.project.clips)
+            if (c.kind == ClipKind::Pattern && c.patternId == session.project.currentPatternId) inSong = true;
+        if (! inSong)
+        {
+            session.setSongMode (false);
+            session.setStatus (TR ("Tocando o padrão em loop (modo PADRÃO). Para usar na música, arraste o padrão para o arranjo."));
+        }
+    }
     session.togglePlay();
 }
 
@@ -876,8 +954,10 @@ void MainComponent::exportAudio()
                               TR ("FLAC 16 bits (qualidade de CD, compactado)"), TR ("FLAC 24 bits (sem perdas, compactado)"),
                               TR ("MP3 320 kbps (melhor qualidade)"), "MP3 256 kbps", "MP3 192 kbps", TR ("MP3 128 kbps (arquivo menor)"), "OGG Vorbis" }, TR ("Formato"));
     aw->addComboBox ("sr", { TR ("44.100 Hz - qualidade de CD"), TR ("48.000 Hz - vídeo (YouTube, Reels)"), "88.200 Hz", "96.000 Hz" }, TR ("Taxa de amostragem"));
-    aw->addComboBox ("range", { TR ("Música inteira"), TR ("Somente a região de loop") }, TR ("Trecho"));
+    aw->addComboBox ("range", { TR ("Música inteira"), TR ("Somente a região de loop"), TR ("Padrão atual (beat do modo PADRÃO), 4 vezes"),
+                                TR ("Padrão atual, 8 vezes") }, TR ("Trecho"));
     auto* settings = session.props.getUserSettings();
+    if (session.project.clips.empty()) aw->getComboBoxComponent ("range")->setSelectedItemIndex (2);   // nada no arranjo: exporta o beat
     aw->getComboBoxComponent ("fmt")->setSelectedItemIndex (juce::jlimit (0, 9, settings->getIntValue ("exportFmt2", 0)));
     aw->getComboBoxComponent ("sr")->setSelectedItemIndex (juce::jlimit (0, 3, settings->getIntValue ("exportSr2", 0)));
     aw->addButton (TR ("Escolher arquivo..."), 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -898,7 +978,9 @@ void MainComponent::exportAudio()
         es.sampleRate = rates[juce::jlimit (0, 3, srIdx)];
         if (es.format == 3 && es.sampleRate > 48000.0)   // MP3 vai no maximo ate 48 kHz
             es.sampleRate = es.sampleRate == 88200.0 ? 44100.0 : 48000.0;
-        es.onlyLoop = aw->getComboBoxComponent ("range")->getSelectedItemIndex() == 1;
+        const int range = aw->getComboBoxComponent ("range")->getSelectedItemIndex();
+        es.onlyLoop = range == 1;
+        es.patternRepeats = range == 2 ? 4 : range == 3 ? 8 : 0;
         const juce::String ext = es.format == 1 ? ".flac" : es.format == 2 ? ".ogg" : es.format == 3 ? ".mp3" : ".wav";
         auto name = session.project.projectFile == juce::File() ? juce::String (TR ("Meu remix")) : session.project.projectFile.getFileNameWithoutExtension();
         chooser = std::make_unique<juce::FileChooser> (TR ("Exportar como"), session.lastFolder().getChildFile (name + ext), "*" + ext);
